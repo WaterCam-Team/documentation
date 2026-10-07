@@ -64,7 +64,7 @@ dashboard.
 **Doc:** SU-WaterCam `docs/POWER_ANALYSIS.md`
 
 - [ ] Measure the off-state draw: the Witty Pi plus the mDot listening in Class C, with the Pi off. It may be as large as all the wakes combined.
-- [ ] Measure the energy per wake with a logger sampling at least once a second, to replace the 0.17 Wh estimate.
+- [ ] Measure the energy per wake with a logger sampling at least once a second. The two captures were measured at 5 Hz on 2026-10-06 (75–87 mWh); boot and shutdown still weren't.
 - [ ] Update `POWER_ANALYSIS.md` with both.
 
 ## 7. Open field-power tests
@@ -73,18 +73,31 @@ dashboard.
 - [ ] Run a load test on 006 while the V50 charges from the real panel through its side solar port, in sun.
 - [ ] Do a full drain with only the panel connected, the power logger running and `recovery_boot` on, and check that the unit recovers by itself.
 - [ ] Summarise the Witty Pi logs from 008–011: wakes after a power loss, and boots that never set a next wake. This costs a few KB of cellular data per unit, so get approval first.
-- [ ] Decide 006's configuration: stock clocks, and the packaged kernel instead of `rpi-update`.
+- [x] Decide 006's configuration: stock clocks and the packaged kernel, applied 2026-10-06.
 
-## 8. Finish the v6 HAT board
+## 8. Measure battery charge
+**Doc:** SU-WaterCam `docs/POWER_ANALYSIS.md`, section *Battery state of charge*
+
+Units have no state-of-charge sensor, and since SU-WaterCam #122 they send no battery percentage. The voltage-based one was noise. Plan: read the V50's own charge signal (about half the cell voltage on its USB-C D+ pin) through the mDot's free `PB_0` ADC.
+
+- [ ] Confirm the field V50s are the "Always On" model the D+ signal is documented for.
+- [ ] Prototype on one unit: a USB-C breakout in the V50's top port with only D+ and GND connected, D+ to mDot `PB_0` through about 10 kΩ, and 100 nF to GND.
+- [ ] mDot-AT-firmware: an AT command that reads `AnalogIn(PB_0)` (Mbed Studio build).
+- [ ] SU-WaterCam `battery_manager.py`: a first path that asks the mDot through the LoRa daemon; fix `CELL_V_MIN` (V50 cuts out near 3.45 V/cell) and the INA260 path's coulomb counting.
+- [ ] Calibrate D+ against charge during the full drain test (section 7), logging D+ once a minute.
+
+## 9. Finish the v6 HAT board
 **Repo:** pcb-designs, PR #3 (draft); see `SESSION_HANDOFF.md`
 
 - [ ] Route the remaining 26 connections and clear the 17 DRC violations.
 - [ ] **Verify BNO055 (U2) pad 1 against the physical breakout.** The footprint has no orientation marking, and a reversed part puts 3.3 V on RST.
 - [ ] Fix the `MDOT:MTDOT` footprint: it has a duplicate pad 24 and no pad 28.
 - [ ] Settle the open assembly choices (BNO055 JP2, R6/R7, R3's footprint, HAT EEPROM), build the fab package, and order samples from OSHPark.
+- [ ] Add a connector for the V50 D+ charge signal to mDot `PB_0` (section 8). The mDot symbol's pin numbers don't match MultiTech's guide (PB0/PB1 and PA0/PA7 are swapped), so lay out by pin name.
 
-## 9. Later
+## 10. Later
 - [ ] Cap how long emergency mode can run (e.g. 6–8 h), then fall back to frequent scheduled wakes. Emergency mode keeps a unit on continuously, about 70–110 Wh/day.
 - [ ] Investigate updating the segmentation model over the air, within the cellular data limits.
 - [ ] Test ONNX export and inference for the recent SegFormer 3-band model.
 - [ ] Cache the camera's white-balance gains across boots, saving about 5 s per wake.
+- [ ] Reduce Tailscale's cellular data while keeping it for remote access (parked 2026-10-07). A cellular wake used 126–474 KB, about 10 KB of it ours. Options and estimates are in SU-WaterCam `docs/CELLULAR_DATA.md`.
