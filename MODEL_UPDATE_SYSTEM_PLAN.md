@@ -524,7 +524,10 @@ Scripts are in the local `session-2026-10-09/phase0/`. Test files are on 005 in
 `~/phase0_20261009/`; its `pylib/` is isolated, and the `5band` env wasn't touched.
 
 **Phase 1, format and provisioning:**
-- `model_package.py` with tests;
+- `model_package.py` with tests. **Done 2026-10-10** (SU-WaterCam PR #126): build/sign/verify/apply,
+  fingerprint, vendored `ed25519_pure.py`, and a fixture whose result hash reproduces on x86 and
+  on 005. Fingerprint logits differ between x86 and aarch64 (masks match), so fingerprints are
+  recorded on the bench Pi only;
 - the node model store;
 - daemon `info`/`reload`/`selftest` and default path;
 - trial-mode guard;
