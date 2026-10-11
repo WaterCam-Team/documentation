@@ -62,6 +62,8 @@ The stage would:
    - rpicam-apps, gpsd, ModemManager, NetworkManager, doas, i2c-tools, build-essential,
      git, tmux;
    - rsync, wget, htop;
+   - `systemd-resolved` (it pulls in `libnss-resolve`), so NetworkManager and Tailscale
+     share DNS instead of overwriting each other's `/etc/resolv.conf` (see below);
    - `tailscale`, from the Tailscale apt repo for trixie.
 2. **Install the software:**
    - clone SU-WaterCam and segformer_5band at pinned commits into `/home/pi`;
@@ -74,6 +76,10 @@ The stage would:
    - `doas.conf`, the polkit NetworkManager rule, the journald drop-in, the Quectel
      udev rule;
    - a NetworkManager profile for the "Quectel" cellular connection;
+   - the NetworkManager drop-in `90-dns-systemd-resolved.conf` (`[main]`,
+     `dns=systemd-resolved`), with `/etc/resolv.conf` a symlink to
+     `../run/systemd/resolve/stub-resolv.conf`. Neither is in `SU-WaterCam/config/`
+     yet;
    - the Witty Pi scripts (`beforeScript.sh`, `syncTime.sh`, `gps_time.py`) and the
      `.wpi` schedules.
 4. **Apply system settings:** ext4 `noatime,commit=60`, tmpfs `/tmp`, no swap
@@ -91,11 +97,15 @@ The stage would:
     `/home/pi/wittypi`;
   - leave out `uwi`.
 - **Drop the conda env.** The daemon needs only onnxruntime, OpenCV, rasterio and
-  Pillow. It can run in the SU-WaterCam venv: rasterio and numpy come from apt, OpenCV
-  4.13 is already pip-installed there, and onnxruntime is one more pip wheel. That
+  Pillow. It runs in the SU-WaterCam venv: rasterio, numpy and OpenCV
+  (`python3-opencv`) come from apt, and onnxruntime is one more pip wheel. That
   removes miniforge, Python 3.9 and torch 1.7, which are the largest and most fragile
-  part of the image. `segformer_daemon.service` would then point at the venv's Python.
-  Tested on 005 (2026-10-11); see the results below.
+  part of the image. `segformer_daemon.service` already points at the venv's Python
+  (SU-WaterCam #142); see the test results below.
+- **systemd-resolved in the chroot.** Once `/etc/resolv.conf` points at resolved's
+  stub, DNS inside the build chroot stops working, because resolved isn't running
+  there. Install it and make the symlink as the stage's last step, after every
+  download.
 - **Model source.** `segformer_5band_int8.onnx` (4.6 MB) currently exists only in
   `photo-masks/annotator/weights/`. It needs a canonical home, such as a GitHub release
   asset, that the build can download by version.
@@ -155,6 +165,52 @@ Notes:
 - **Reflashing an existing node.** Delete its old entry in the Tailscale admin console
   first. Otherwise the node comes back as `ufo-01-01-NNN-1`.
 
+## DNS: systemd-resolved
+
+Raspberry Pi OS Lite doesn't install systemd-resolved, so NetworkManager writes
+`/etc/resolv.conf` directly, and so does Tailscale when MagicDNS is on.
+
+**What goes wrong without it:**
+
+- NetworkManager rewrites the file each time a connection comes up or goes down,
+  including the Quectel connection the IP uplink starts on demand.
+- Each rewrite drops Tailscale's `100.100.100.100`. Tailnet names, including the API
+  server's, stop resolving until tailscaled writes the file again.
+- On 006 (2026-10-11) that took 26 s in one test, and in another the name still didn't
+  resolve 40 s after Quectel came up.
+- The failure is immediate: `curl` reports `Could not resolve host`, not a timeout.
+  The cycle then decides the server is unreachable over WiFi and brings Quectel up
+  again. 006 did that on every wake, and it spends cellular data even with WiFi up.
+
+**With systemd-resolved:**
+
+- NetworkManager gives resolved each connection's DNS servers.
+- Tailscale gives it `100.100.100.100` for the tailnet's domains only (split DNS).
+- Nothing overwrites anything.
+
+**Tested on 006 (2026-10-11):**
+
+| Test | Before | With resolved |
+|---|---|---|
+| Quectel up, then down, `/health` by name every second | 26 s to never-recovered of failures | no failures |
+| Wake cycle with WiFi up | server unreachable twice, Quectel brought up twice | both uplinks over WiFi, Quectel untouched |
+| Wake cycle with WiFi down | not run | Quectel up once, both uplinks sent, no flapping |
+| Reboot | not run | resolved, NetworkManager and Tailscale come up; server resolves at once |
+
+005 was switched the same way that day. Both nodes keep the old files in
+`/root/dns-before-resolved-20261011`.
+
+**On an existing node:**
+
+1. `apt install systemd-resolved`. The package points `/etc/resolv.conf` at the stub.
+2. Add the NetworkManager drop-in above and reload NetworkManager.
+3. Restart tailscaled. It picks its DNS mode when it starts.
+
+Restarting tailscaled drops a Tailscale SSH session, so run the steps detached, for
+example under `systemd-run`, with a rollback if the server name doesn't resolve
+afterwards. A built image needs none of this: resolved is in place before Tailscale
+first starts.
+
 ## What stays manual
 
 These are per-node secrets or hardware state, not image content:
@@ -195,23 +251,26 @@ Setup:
 Notes:
 
 - 005 still runs the older fp32 model. The int8 model isn't deployed there.
-- System Python on 005 has no `cv2`; the venv's pip OpenCV provides it. The image
-  should do the same, or install apt's `python3-opencv` and drop the pip copy.
+- At the time, system Python on 005 had no `cv2` and the venv's pip OpenCV provided it.
+  005 has since moved to apt's `python3-opencv` 4.10, like 006, and the segmentation
+  output was unchanged. The image should install `python3-opencv` and no pip copy.
 
 ## Effort and next steps
 
 About 2–4 days to a first working pi-gen image, plus a bench check against the current
 setup.
 
-1. ~~Test the segformer daemon without conda on 005.~~ Done 2026-10-11: it works (see
-   above). Add a pinned onnxruntime to `requirements.txt`, point
-   `segformer_daemon.service` at the venv, and run it on 005 for a while before
-   removing conda.
-2. Publish the int8 model as a versioned release asset.
-3. Write the pi-gen stage and the first-boot service; build in Docker or on an arm64
+1. ~~Test the segformer daemon without conda on 005.~~ Done 2026-10-11 (see above).
+   SU-WaterCam #142 pins onnxruntime in `requirements.txt` and points
+   `segformer_daemon.service` at the venv. 005 and 006 both run it that way, with
+   apt's OpenCV. Conda stays until the venv has run for a while.
+2. Add the systemd-resolved NetworkManager drop-in to `SU-WaterCam/config/` and to the
+   setup guide, so hand-built nodes get it too.
+3. Publish the int8 model as a versioned release asset.
+4. Write the pi-gen stage and the first-boot service; build in Docker or on an arm64
    runner.
-4. Write the flashing script (asks for NNN and the API key, mints the Tailscale key,
+5. Write the flashing script (asks for NNN and the API key, mints the Tailscale key,
    writes the boot-partition files).
-5. Flash a spare card for 006 and compare services, packages and captures with the
+6. Flash a spare card for 006 and compare services, packages and captures with the
    current image.
-6. Update `sd-images/README.md` and FIELD_DEPLOYMENT_GUIDE to the new flow.
+7. Update `sd-images/README.md` and FIELD_DEPLOYMENT_GUIDE to the new flow.
