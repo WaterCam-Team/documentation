@@ -76,10 +76,9 @@ The stage would:
    - `doas.conf`, the polkit NetworkManager rule, the journald drop-in, the Quectel
      udev rule;
    - a NetworkManager profile for the "Quectel" cellular connection;
-   - the NetworkManager drop-in `90-dns-systemd-resolved.conf` (`[main]`,
-     `dns=systemd-resolved`), with `/etc/resolv.conf` a symlink to
-     `../run/systemd/resolve/stub-resolv.conf`. Neither is in `SU-WaterCam/config/`
-     yet;
+   - the NetworkManager drop-in `config/networkmanager/90-dns-systemd-resolved.conf`
+     (SU-WaterCam #145), with `/etc/resolv.conf` a symlink to
+     `../run/systemd/resolve/stub-resolv.conf`;
    - the Witty Pi scripts (`beforeScript.sh`, `syncTime.sh`, `gps_time.py`) and the
      `.wpi` schedules.
 4. **Apply system settings:** ext4 `noatime,commit=60`, tmpfs `/tmp`, no swap
@@ -200,7 +199,8 @@ Raspberry Pi OS Lite doesn't install systemd-resolved, so NetworkManager writes
 005 was switched the same way that day. Both nodes keep the old files in
 `/root/dns-before-resolved-20261011`.
 
-**On an existing node:**
+**On an existing node** (the steps are in SU-WaterCam's FIELD_DEPLOYMENT_GUIDE, section
+1.3):
 
 1. `apt install systemd-resolved`. The package points `/etc/resolv.conf` at the stub.
 2. Add the NetworkManager drop-in above and reload NetworkManager.
@@ -264,8 +264,8 @@ setup.
    SU-WaterCam #142 pins onnxruntime in `requirements.txt` and points
    `segformer_daemon.service` at the venv. 005 and 006 both run it that way, with
    apt's OpenCV. Conda stays until the venv has run for a while.
-2. Add the systemd-resolved NetworkManager drop-in to `SU-WaterCam/config/` and to the
-   setup guide, so hand-built nodes get it too.
+2. ~~Add the systemd-resolved NetworkManager drop-in to `SU-WaterCam/config/` and to
+   the setup guide.~~ SU-WaterCam #145.
 3. Publish the int8 model as a versioned release asset.
 4. Write the pi-gen stage and the first-boot service; build in Docker or on an arm64
    runner.
