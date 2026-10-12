@@ -78,13 +78,19 @@ The stage would:
    - a NetworkManager profile for the "Quectel" cellular connection;
    - the NetworkManager drop-in `config/networkmanager/90-dns-systemd-resolved.conf`
      (SU-WaterCam #145), with `/etc/resolv.conf` a symlink to
-     `../run/systemd/resolve/stub-resolv.conf`;
+     `../run/systemd/resolve/stub-resolv.conf`, and the resolved drop-in
+     `config/systemd-resolved/90-watercam.conf` (LLMNR and mDNS off, SU-WaterCam #153);
+   - the cellular probe filter `config/nftables/watercam-cellular.nft` and its service
+     (SU-WaterCam #152), once measured;
    - the Witty Pi scripts (`beforeScript.sh`, `syncTime.sh`, `gps_time.py`) and the
      `.wpi` schedules.
 4. **Apply system settings:** ext4 `noatime,commit=60`, tmpfs `/tmp`, no swap
    (`dphys-swapfile` removed).
 5. **Set pi-gen options:** user `pi` (`FIRST_USER_NAME`), skip the first-boot rename
-   wizard, enable SSH.
+   wizard. Leave OpenSSH off: nodes are reached with Tailscale SSH only
+   (SU-WaterCam `docs/NODE_SECURITY.md`). No password is built in (see the flashing
+   script below).
+6. **Write the SBOM** (see "Software bill of materials" below).
 
 ### Things to watch
 
@@ -125,9 +131,14 @@ The stage would:
 
 ## Hostname and Tailscale at first boot
 
-Build one generic image. After flashing, a small script writes two files to each
+Build one generic image. After flashing, a small script writes these files to each
 card's FAT boot partition (`/boot/firmware`):
 
+- `userconf.txt`: `pi:<hash>`, a password unique to the unit (Raspberry Pi OS sets it
+  at first boot and deletes the file). The serial console stays enabled for field
+  repairs, so this is a root login for anyone holding the unit: generate 16+ random
+  characters per card, store them in the team's password manager as
+  `ufo-01-01-NNN serial`, and write only the hash (`openssl passwd -6`);
 - `ufo-node-id`: the node number, `NNN`;
 - `ts-authkey`: a Tailscale auth key.
 
@@ -211,6 +222,35 @@ example under `systemd-run`, with a rollback if the server name doesn't resolve
 afterwards. A built image needs none of this: resolved is in place before Tailscale
 first starts.
 
+## Software bill of materials
+
+Every node flashed from one build is identical, so one SBOM per build describes them
+all. Each build should produce one, alongside the image:
+
+1. **Generate** with Syft on the finished root filesystem, as CycloneDX JSON:
+   `syft dir:<rootfs> -o cyclonedx-json=watercam-<release>.cdx.json`. That covers the
+   Debian packages, the venv's Python packages and other binaries it recognises.
+2. **Add what Syft can't see**, as extra CycloneDX components:
+   - the ONNX model (name and SHA-256), type `machine-learning-model`;
+   - the Witty Pi and mDot firmware versions the image expects;
+   - Tailscale, if it was installed outside apt.
+
+   SU-WaterCam's `tools/node_inventory.py` (#155) already writes these components in
+   the same format for a hand-built node, so its code can be reused.
+3. **Scan** with Grype in the build (`grype sbom:watercam-<release>.cdx.json`). Fail
+   the build on a critical or high finding that has a fix; triage the rest
+   (on 005, almost all of 234 matches were Debian `wont-fix`). Re-scan published SBOMs
+   on a schedule, so a new advisory against a released image is flagged.
+4. **Publish** the SBOM with the release, next to the image, and sign it like the
+   release tag.
+5. **Link it to the fleet:** each node reports its release and model ID (SU-WaterCam
+   #150), so the dashboard's version per unit says which SBOM applies to it.
+
+Not required today: SBOM rules apply to software sold to US federal agencies (EO 14028)
+or placed on the EU market commercially (Cyber Resilience Act, from 2026-2027), and a
+university research deployment is neither. A partner's contract (a city, a procurement
+office, a grant) may ask for one, and the build produces it anyway.
+
 ## What stays manual
 
 These are per-node secrets or hardware state, not image content:
@@ -270,7 +310,8 @@ setup.
 4. Write the pi-gen stage and the first-boot service; build in Docker or on an arm64
    runner.
 5. Write the flashing script (asks for NNN and the API key, mints the Tailscale key,
-   writes the boot-partition files).
+   generates the unit's `pi` password, writes the boot-partition files).
 6. Flash a spare card for 006 and compare services, packages and captures with the
    current image.
 7. Update `sd-images/README.md` and FIELD_DEPLOYMENT_GUIDE to the new flow.
+8. Generate, scan and publish the SBOM with each build (see above).
