@@ -1,6 +1,6 @@
 # WaterCam next steps
 
-**Updated:** 2026-10-04. In rough priority order. Each item names the repo and
+**Updated:** 2026-10-11. In rough priority order. Each item names the repo and
 PR or doc to start from.
 
 ## 1. Flash and test the emergency-packet firmware fix
@@ -49,8 +49,31 @@ Use WiFi on the bench where possible, to save cellular data. For each unit:
 - [ ] Give the unit its own machine ID (guide step 1.2).
 - [ ] Use stock clocks (`arm_freq=1800`) to lower peak current.
 - [ ] Keep Witty Pi "Default ON" with the 10 s delay; press the button at deployment.
+- [ ] Switch DNS to systemd-resolved (guide 1.3, SU-WaterCam #145). Without it, each Quectel up/down drops MagicDNS and the uplink falls back to cellular on every wake. Restart tailscaled detached, since it drops a Tailscale SSH session.
+- [ ] Run `segformer_daemon` from the venv (SU-WaterCam #142): pip-install the pinned onnxruntime, flatbuffers and protobuf from `requirements.txt`, install apt `python3-opencv` in place of a pip copy, and copy `config/segformer_daemon.service`. Compare one capture's mask before and after.
+- [ ] Issue the unit an IP token in Management and put it in `runtime_config.json` as `ip_upload.api_key` (API #122). Once every unit sends one (`GET /ip/auth-status`), set `IP_AUTH=enforce` on the server.
 
-## 5. Resolve the `14 94` command collision
+## 5. Check the registration orientation flag in the field
+**Repos:** SU-WaterCam #143, API #123
+
+After co-registration, the node compares the IMU pose with the one stored with the cached transform. It sends `registration_status` on `01 08` (0 ok, 1 shifted, 2 adopted, 3 no cache, 4 no IMU), and the dashboard shows "Check alignment" while it is 1. It flags only; the transform is never re-solved automatically. Tested on 005 (LoRa) and 006 (IP) on 2026-10-11: adopted, then ok, and both reached the server.
+
+- [ ] Do IMU stage-1 calibration (`bno055_calibration.json`) on 005, 006 and the field units. Until then heading isn't trusted and only tilt counts.
+- [ ] Look at the "Check alignment" pill in a browser; it has only been syntax-checked.
+- [ ] When a unit flags, check its alignment by eye, then re-seed or run `python -m tools.registration_orientation --reset`.
+
+## 6. Build a custom node image (pi-gen)
+**Doc:** `IMAGE_BUILD_FEASIBILITY.md`
+
+pi-gen on Trixie is feasible. Hostname `ufo-01-01-NNN`, Tailscale and Tailscale SSH are set at first boot from files the flashing script writes to the boot partition, with a per-card auth key, never one built into the image.
+
+- [ ] Remove conda from 005 and 006 once the venv daemon has run for a while (both switched 2026-10-11).
+- [ ] Publish the int8 model as a versioned release asset.
+- [ ] Write the pi-gen stage (including systemd-resolved, installed last) and the first-boot service; build in Docker or on an arm64 runner.
+- [ ] Write the flashing script: asks for NNN and the API key, mints the Tailscale key, writes the boot-partition files.
+- [ ] Flash a spare card for 006 and compare it with the current image.
+
+## 7. Resolve the `14 94` command collision
 **Repos:** API, SU-WaterCam
 
 The dashboard sends "flood code frequency" as an index (0–5) on `14 94`, but
@@ -60,14 +83,14 @@ dashboard.
 
 - [ ] Decide what `14 94` means, give the other setting its own code, and make the API encoder and the node's LoRa and IP parsers agree.
 
-## 6. Measure power properly
+## 8. Measure power properly
 **Doc:** SU-WaterCam `docs/POWER_ANALYSIS.md`
 
 - [ ] Measure the off-state draw: the Witty Pi plus the mDot listening in Class C, with the Pi off. It may be as large as all the wakes combined.
 - [ ] Measure the energy per wake with a logger sampling at least once a second. The two captures were measured at 5 Hz on 2026-10-06 (75–87 mWh); boot and shutdown still weren't.
 - [ ] Update `POWER_ANALYSIS.md` with both.
 
-## 7. Open field-power tests
+## 9. Open field-power tests
 **Doc:** SU-WaterCam `docs/UNIT006_POWER_FAILURE.md`
 
 - [ ] Run a load test on 006 while the V50 charges from the real panel through its side solar port, in sun.
@@ -75,7 +98,7 @@ dashboard.
 - [ ] Summarise the Witty Pi logs from 008–011: wakes after a power loss, and boots that never set a next wake. This costs a few KB of cellular data per unit, so get approval first.
 - [x] Decide 006's configuration: stock clocks and the packaged kernel, applied 2026-10-06.
 
-## 8. Measure battery charge
+## 10. Measure battery charge
 **Doc:** SU-WaterCam `docs/POWER_ANALYSIS.md`, section *Battery state of charge*
 
 Units have no state-of-charge sensor, and since SU-WaterCam #122 they send no battery percentage. The voltage-based one was noise. Plan: read the V50's own charge signal (about half the cell voltage on its USB-C D+ pin) through the mDot's free `PB_0` ADC.
@@ -84,20 +107,21 @@ Units have no state-of-charge sensor, and since SU-WaterCam #122 they send no ba
 - [ ] Prototype on one unit: a USB-C breakout in the V50's top port with only D+ and GND connected, D+ to mDot `PB_0` through about 10 kΩ, and 100 nF to GND.
 - [ ] mDot-AT-firmware: an AT command that reads `AnalogIn(PB_0)` (Mbed Studio build).
 - [ ] SU-WaterCam `battery_manager.py`: a first path that asks the mDot through the LoRa daemon; fix `CELL_V_MIN` (V50 cuts out near 3.45 V/cell) and the INA260 path's coulomb counting.
-- [ ] Calibrate D+ against charge during the full drain test (section 7), logging D+ once a minute.
+- [ ] Calibrate D+ against charge during the full drain test (section 9), logging D+ once a minute.
 
-## 9. Finish the v6 HAT board
+## 11. Finish the v6 HAT board
 **Repo:** pcb-designs, PR #3 (draft); see `SESSION_HANDOFF.md`
 
 - [ ] Route the remaining 26 connections and clear the 17 DRC violations.
 - [ ] **Verify BNO055 (U2) pad 1 against the physical breakout.** The footprint has no orientation marking, and a reversed part puts 3.3 V on RST.
 - [ ] Fix the `MDOT:MTDOT` footprint: it has a duplicate pad 24 and no pad 28.
 - [ ] Settle the open assembly choices (BNO055 JP2, R6/R7, R3's footprint, HAT EEPROM), build the fab package, and order samples from OSHPark.
-- [ ] Add a connector for the V50 D+ charge signal to mDot `PB_0` (section 8). The mDot symbol's pin numbers don't match MultiTech's guide (PB0/PB1 and PA0/PA7 are swapped), so lay out by pin name.
+- [ ] Add a connector for the V50 D+ charge signal to mDot `PB_0` (section 10). The mDot symbol's pin numbers don't match MultiTech's guide (PB0/PB1 and PA0/PA7 are swapped), so lay out by pin name.
 
-## 10. Later
+## 12. Later
 - [ ] Cap how long emergency mode can run (e.g. 6–8 h), then fall back to frequent scheduled wakes. Emergency mode keeps a unit on continuously, about 70–110 Wh/day.
 - [ ] Investigate updating the segmentation model over the air, within the cellular data limits.
 - [ ] Test ONNX export and inference for the recent SegFormer 3-band model.
+- [ ] Watch a real command arrive over cellular. Since SU-WaterCam #144 the node polls for IP commands after every delivered uplink, so a cellular-only unit gets them after the capture. Tested on 006 with an empty queue only.
 - [ ] Cache the camera's white-balance gains across boots, saving about 5 s per wake.
 - [ ] Reduce Tailscale's cellular data while keeping it for remote access (parked 2026-10-07). A cellular wake used 126–474 KB, about 10 KB of it ours. Options and estimates are in SU-WaterCam `docs/CELLULAR_DATA.md`.
