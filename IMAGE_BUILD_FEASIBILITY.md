@@ -61,7 +61,7 @@ The stage would:
    - the list in the `requirements.txt` header;
    - rpicam-apps, gpsd, ModemManager, NetworkManager, doas, i2c-tools, build-essential,
      git, tmux;
-   - rsync, wget, htop;
+   - rsync, htop;
    - `systemd-resolved` (it pulls in `libnss-resolve`), so NetworkManager and Tailscale
      share DNS instead of overwriting each other's `/etc/resolv.conf` (see below);
    - `tailscale`, from the Tailscale apt repo for trixie.
@@ -81,18 +81,65 @@ The stage would:
      `../run/systemd/resolve/stub-resolv.conf`, and the resolved drop-in
      `config/systemd-resolved/90-watercam.conf` (LLMNR and mDNS off, SU-WaterCam #153);
    - the cellular probe filter `config/nftables/watercam-cellular.nft` and its service
-     (SU-WaterCam #152), once measured;
+     (SU-WaterCam #152), enabled: measured on 006 (19–28 KB per cellular wake to 0) and on
+     by default since 2026-10-12;
    - the Witty Pi scripts (`beforeScript.sh`, `syncTime.sh`, `gps_time.py`) and the
      `.wpi` schedules.
-4. **Apply system settings:** ext4 `noatime,commit=60`, tmpfs `/tmp`, no swap
+4. **Leave out what a node doesn't need** (SU-WaterCam guide 1.3.2): no `neovim`,
+   `wget` or `lrzsz`; keep `nano`, `curl` (the Witty Pi's network-time sync), `git` and
+   `perl`. Because the image builds the venv and the Lepton tools itself, it could also
+   purge `build-essential`, `gcc-14` and `python3-dev` at the end of the stage; a unit
+   would then need them reinstalled to rebuild its venv. OpenCV comes from pip's
+   `opencv-python-headless` (`requirements.txt`, SU-WaterCam #162), not apt's
+   `python3-opencv`, which would pull in VTK, LLVM 17, AMD's GPU-computing libraries and
+   OpenMPI (about 450 MB, unused).
+5. **Apply system settings:** ext4 `noatime,commit=60`, tmpfs `/tmp`, no swap
    (`dphys-swapfile` removed).
-5. **Set pi-gen options:** user `pi` (`FIRST_USER_NAME`), skip the first-boot rename
+6. **Set pi-gen options:** user `pi` (`FIRST_USER_NAME`), skip the first-boot rename
    wizard. Leave OpenSSH off: nodes are reached with Tailscale SSH only
    (SU-WaterCam `docs/NODE_SECURITY.md`). No password is built in (see the flashing
    script below).
-6. **Write the SBOM** (see "Software bill of materials" below).
+7. **Write the SBOM** (see "Software bill of materials" below).
 
 ### Things to watch
+
+- **Manage the venv with uv** (`uv venv --system-site-packages` and `uv pip sync` against
+  a lock compiled from `requirements.txt`; CI already runs `uv pip compile` on it). It is
+  much faster than pip in the chroot and makes the venv exactly reproducible from build to
+  build. On one image it saves little disk: the node venv shares almost nothing with any
+  other environment (its heavy libraries come from apt), and uv's hard-link sharing only
+  pays off across several venvs with the same versions, as on 005's research venvs.
+  - Install uv's binary into the image (or use it only in the build stage) and set
+    `UV_CACHE_DIR` inside the build so its cache doesn't end up in the image, or clear it
+    with `uv cache clean` before export.
+  - **Pin the interpreter.** The system Python is trixie's 3.13. A venv built on bookworm's
+    3.11 silently broke when units were upgraded: `bin/python` became 3.13, which never
+    reads `lib/python3.11` (found on 005 and 006 in 2026-10). With uv, either build
+    against the system 3.13 or use a uv-managed Python (`uv python install`, as 005's
+    mask2former-type-pool venv does), which upgrades of the OS don't touch.
+- **Package choices settled on the bench (005 and 006, 2026-10-12).** The image should
+  follow them rather than the older setup notes:
+  - OpenCV is pip's `opencv-python-headless` (pinned in `requirements.txt`), never apt's
+    `python3-opencv`. Headless is enough for everything on a node; only the workstation
+    calibration tool (`tools/camera_calibration.py`) needs a GUI build, and it runs in a
+    throwaway venv off the node.
+  - Leave out `neovim`, `wget`, `lrzsz` and `minicom` (`tio` is the serial tool in use);
+    keep `nano`, `curl` (the Witty Pi's network-time sync), `git` and `perl`.
+  - A fresh trixie image has none of the bookworm leftovers (`gcc-12`, `python3.11`, the
+    venv's `lib/python3.11`) that upgraded units carry.
+  - After the image is built, list its packages and compare with 005 and 006's
+    inventories (WaterCam-Team/documentation `inventories/`) to catch anything that
+    crept back in.
+- **Boot current and background jobs (2026-10-13).** Build these in, so a battery unit's
+  boot surge stays low and nothing downloads over cellular on its own:
+  - `config.txt` with stock clocks: no `arm_freq=2000` and no `initial_turbo`
+    (SU-WaterCam #166).
+  - `uhubctl`, `usb-power-off.service` and `usb-power-on.timer` enabled, and the
+    hotplug version of `quectel-gnss.service` (SU-WaterCam #165).
+  - Mask `apt-daily.timer`, `apt-daily-upgrade.timer` and `man-db.timer`; leave out
+    `man-db`; and add a `dpkg.cfg.d` rule excluding `/usr/share/man` and `/usr/share/doc`
+    (keeping the copyright files) before the package stage, so the image never contains
+    them (guide 1.3.2, SU-WaterCam #161).
 
 - **Witty Pi installer.** Don't run UUGear's `install.sh` in the build: it downloads
   at run time and edits files in place. Reproduce its effects instead:
@@ -103,7 +150,7 @@ The stage would:
   - leave out `uwi`.
 - **Drop the conda env.** The daemon needs only onnxruntime, OpenCV, rasterio and
   Pillow. It runs in the SU-WaterCam venv: rasterio, numpy and OpenCV
-  (`python3-opencv`) come from apt, and onnxruntime is one more pip wheel. That
+  come from apt, and onnxruntime and OpenCV (`opencv-python-headless`) are pip wheels. That
   removes miniforge, Python 3.9 and torch 1.7, which are the largest and most fragile
   part of the image. `segformer_daemon.service` already points at the venv's Python
   (SU-WaterCam #142); see the test results below.
@@ -241,8 +288,10 @@ all. Each build should produce one, alongside the image:
    the build on a critical or high finding that has a fix; triage the rest
    (on 005, almost all of 234 matches were Debian `wont-fix`). Re-scan published SBOMs
    on a schedule, so a new advisory against a released image is flagged.
-4. **Publish** the SBOM with the release, next to the image, and sign it like the
-   release tag.
+4. **Publish** the SBOM next to the image, and sign it like the release tag. If it goes on a
+   GitHub release, attach it *before* publishing: SU-WaterCam's releases are immutable, so
+   nothing can be added afterwards (found with v2026.10.0). Otherwise store it in
+   WaterCam-Team/documentation `inventories/`, as v2026.10.0's node inventories are.
 5. **Link it to the fleet:** each node reports its release and model ID (SU-WaterCam
    #150), so the dashboard's version per unit says which SBOM applies to it.
 
@@ -292,8 +341,10 @@ Notes:
 
 - 005 still runs the older fp32 model. The int8 model isn't deployed there.
 - At the time, system Python on 005 had no `cv2` and the venv's pip OpenCV provided it.
-  005 has since moved to apt's `python3-opencv` 4.10, like 006, and the segmentation
-  output was unchanged. The image should install `python3-opencv` and no pip copy.
+  005 then moved to apt's `python3-opencv` 4.10, like 006. On 2026-10-12 both moved to
+  pip's `opencv-python-headless` 4.14 with apt's package removed (SU-WaterCam #162): identical
+  masks, and images identical apart from band 4 on 006 (at most 2/255). The image should
+  install the pip package and not `python3-opencv`.
 
 ## Effort and next steps
 
