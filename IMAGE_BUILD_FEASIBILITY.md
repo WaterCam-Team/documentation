@@ -89,10 +89,10 @@ The stage would:
    `wget` or `lrzsz`; keep `nano`, `curl` (the Witty Pi's network-time sync), `git` and
    `perl`. Because the image builds the venv and the Lepton tools itself, it could also
    purge `build-essential`, `gcc-14` and `python3-dev` at the end of the stage; a unit
-   would then need them reinstalled to rebuild its venv. The biggest saving would be
-   pip's `opencv-python-headless` in place of apt's `python3-opencv`, which pulls in VTK,
-   LLVM 17, AMD's GPU-computing libraries and OpenMPI (several hundred MB, unused);
-   that needs the capture pipeline re-tested.
+   would then need them reinstalled to rebuild its venv. OpenCV comes from pip's
+   `opencv-python-headless` (`requirements.txt`, SU-WaterCam #162), not apt's
+   `python3-opencv`, which would pull in VTK, LLVM 17, AMD's GPU-computing libraries and
+   OpenMPI (about 450 MB, unused).
 5. **Apply system settings:** ext4 `noatime,commit=60`, tmpfs `/tmp`, no swap
    (`dphys-swapfile` removed).
 6. **Set pi-gen options:** user `pi` (`FIRST_USER_NAME`), skip the first-boot rename
@@ -112,7 +112,7 @@ The stage would:
   - leave out `uwi`.
 - **Drop the conda env.** The daemon needs only onnxruntime, OpenCV, rasterio and
   Pillow. It runs in the SU-WaterCam venv: rasterio, numpy and OpenCV
-  (`python3-opencv`) come from apt, and onnxruntime is one more pip wheel. That
+  come from apt, and onnxruntime and OpenCV (`opencv-python-headless`) are pip wheels. That
   removes miniforge, Python 3.9 and torch 1.7, which are the largest and most fragile
   part of the image. `segformer_daemon.service` already points at the venv's Python
   (SU-WaterCam #142); see the test results below.
@@ -301,8 +301,10 @@ Notes:
 
 - 005 still runs the older fp32 model. The int8 model isn't deployed there.
 - At the time, system Python on 005 had no `cv2` and the venv's pip OpenCV provided it.
-  005 has since moved to apt's `python3-opencv` 4.10, like 006, and the segmentation
-  output was unchanged. The image should install `python3-opencv` and no pip copy.
+  005 then moved to apt's `python3-opencv` 4.10, like 006. On 2026-10-12 both moved to
+  pip's `opencv-python-headless` 4.14 with apt's package removed (SU-WaterCam #162): identical
+  masks, and images identical apart from band 4 on 006 (at most 2/255). The image should
+  install the pip package and not `python3-opencv`.
 
 ## Effort and next steps
 
