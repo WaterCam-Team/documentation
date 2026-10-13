@@ -61,7 +61,7 @@ The stage would:
    - the list in the `requirements.txt` header;
    - rpicam-apps, gpsd, ModemManager, NetworkManager, doas, i2c-tools, build-essential,
      git, tmux;
-   - rsync, wget, htop;
+   - rsync, htop;
    - `systemd-resolved` (it pulls in `libnss-resolve`), so NetworkManager and Tailscale
      share DNS instead of overwriting each other's `/etc/resolv.conf` (see below);
    - `tailscale`, from the Tailscale apt repo for trixie.
@@ -81,16 +81,25 @@ The stage would:
      `../run/systemd/resolve/stub-resolv.conf`, and the resolved drop-in
      `config/systemd-resolved/90-watercam.conf` (LLMNR and mDNS off, SU-WaterCam #153);
    - the cellular probe filter `config/nftables/watercam-cellular.nft` and its service
-     (SU-WaterCam #152), once measured;
+     (SU-WaterCam #152), enabled: measured on 006 (19–28 KB per cellular wake to 0) and on
+     by default since 2026-10-12;
    - the Witty Pi scripts (`beforeScript.sh`, `syncTime.sh`, `gps_time.py`) and the
      `.wpi` schedules.
-4. **Apply system settings:** ext4 `noatime,commit=60`, tmpfs `/tmp`, no swap
+4. **Leave out what a node doesn't need** (SU-WaterCam guide 1.3.2): no `neovim`,
+   `wget` or `lrzsz`; keep `nano`, `curl` (the Witty Pi's network-time sync), `git` and
+   `perl`. Because the image builds the venv and the Lepton tools itself, it could also
+   purge `build-essential`, `gcc-14` and `python3-dev` at the end of the stage; a unit
+   would then need them reinstalled to rebuild its venv. The biggest saving would be
+   pip's `opencv-python-headless` in place of apt's `python3-opencv`, which pulls in VTK,
+   LLVM 17, AMD's GPU-computing libraries and OpenMPI (several hundred MB, unused);
+   that needs the capture pipeline re-tested.
+5. **Apply system settings:** ext4 `noatime,commit=60`, tmpfs `/tmp`, no swap
    (`dphys-swapfile` removed).
-5. **Set pi-gen options:** user `pi` (`FIRST_USER_NAME`), skip the first-boot rename
+6. **Set pi-gen options:** user `pi` (`FIRST_USER_NAME`), skip the first-boot rename
    wizard. Leave OpenSSH off: nodes are reached with Tailscale SSH only
    (SU-WaterCam `docs/NODE_SECURITY.md`). No password is built in (see the flashing
    script below).
-6. **Write the SBOM** (see "Software bill of materials" below).
+7. **Write the SBOM** (see "Software bill of materials" below).
 
 ### Things to watch
 

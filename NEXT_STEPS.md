@@ -51,6 +51,7 @@ Use WiFi on the bench where possible, to save cellular data. For each unit:
 - [ ] Keep Witty Pi "Default ON" with the 10 s delay; press the button at deployment.
 - [ ] Switch DNS to systemd-resolved (guide 1.3, SU-WaterCam #145). Without it, each Quectel up/down drops MagicDNS and the uplink falls back to cellular on every wake. Restart tailscaled detached, since it drops a Tailscale SSH session. Install `config/systemd-resolved/90-watercam.conf` too (SU-WaterCam #153: LLMNR and multicast DNS off).
 - [ ] Keep cellular on demand and filtered (guide 1.5.1): `Quectel` autoconnect off, the polkit rule, and `watercam-cellular-filter.service` enabled (SU-WaterCam #152). The filter keeps Tailscale's private-address probes off the modem: 19–28 KB per cellular wake down to 0, measured on 006 on 2026-10-12.
+- [ ] Remove packages a node doesn't need (guide 1.3.2, SU-WaterCam #161): `neovim`, `wget`, `lrzsz`, the bookworm leftovers (`gcc-12`, `python3.11-minimal`), leftover config, and the venv's dead `lib/python3.11` (about 300 MB). Done on 005 and 006 on 2026-10-12.
 - [ ] Run `segformer_daemon` from the venv (SU-WaterCam #142): pip-install the pinned onnxruntime, flatbuffers and protobuf from `requirements.txt`, install apt `python3-opencv` in place of a pip copy, and copy `config/segformer_daemon.service`. Compare one capture's mask before and after.
 - [ ] Issue the unit an IP token in Management and put it in `runtime_config.json` as `ip_upload.api_key` (API #122). Once every unit sends one (`GET /ip/auth-status`), set `IP_AUTH=enforce` on the server.
 
