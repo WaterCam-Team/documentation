@@ -103,6 +103,20 @@ The stage would:
 
 ### Things to watch
 
+- **Package choices settled on the bench (005 and 006, 2026-10-12).** The image should
+  follow them rather than the older setup notes:
+  - OpenCV is pip's `opencv-python-headless` (pinned in `requirements.txt`), never apt's
+    `python3-opencv`. Headless is enough for everything on a node; only the workstation
+    calibration tool (`tools/camera_calibration.py`) needs a GUI build, and it runs in a
+    throwaway venv off the node.
+  - Leave out `neovim`, `wget`, `lrzsz` and `minicom` (`tio` is the serial tool in use);
+    keep `nano`, `curl` (the Witty Pi's network-time sync), `git` and `perl`.
+  - A fresh trixie image has none of the bookworm leftovers (`gcc-12`, `python3.11`, the
+    venv's `lib/python3.11`) that upgraded units carry.
+  - After the image is built, list its packages and compare with 005 and 006's
+    inventories (WaterCam-Team/documentation `inventories/`) to catch anything that
+    crept back in.
+
 - **Witty Pi installer.** Don't run UUGear's `install.sh` in the build: it downloads
   at run time and edits files in place. Reproduce its effects instead:
   - add `i2c-dev` to `/etc/modules`;
@@ -250,8 +264,10 @@ all. Each build should produce one, alongside the image:
    the build on a critical or high finding that has a fix; triage the rest
    (on 005, almost all of 234 matches were Debian `wont-fix`). Re-scan published SBOMs
    on a schedule, so a new advisory against a released image is flagged.
-4. **Publish** the SBOM with the release, next to the image, and sign it like the
-   release tag.
+4. **Publish** the SBOM next to the image, and sign it like the release tag. If it goes on a
+   GitHub release, attach it *before* publishing: SU-WaterCam's releases are immutable, so
+   nothing can be added afterwards (found with v2026.10.0). Otherwise store it in
+   WaterCam-Team/documentation `inventories/`, as v2026.10.0's node inventories are.
 5. **Link it to the fleet:** each node reports its release and model ID (SU-WaterCam
    #150), so the dashboard's version per unit says which SBOM applies to it.
 
