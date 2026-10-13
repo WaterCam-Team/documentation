@@ -103,6 +103,20 @@ The stage would:
 
 ### Things to watch
 
+- **Manage the venv with uv** (`uv venv --system-site-packages` and `uv pip sync` against
+  a lock compiled from `requirements.txt`; CI already runs `uv pip compile` on it). It is
+  much faster than pip in the chroot and makes the venv exactly reproducible from build to
+  build. On one image it saves little disk: the node venv shares almost nothing with any
+  other environment (its heavy libraries come from apt), and uv's hard-link sharing only
+  pays off across several venvs with the same versions, as on 005's research venvs.
+  - Install uv's binary into the image (or use it only in the build stage) and set
+    `UV_CACHE_DIR` inside the build so its cache doesn't end up in the image, or clear it
+    with `uv cache clean` before export.
+  - **Pin the interpreter.** The system Python is trixie's 3.13. A venv built on bookworm's
+    3.11 silently broke when units were upgraded: `bin/python` became 3.13, which never
+    reads `lib/python3.11` (found on 005 and 006 in 2026-10). With uv, either build
+    against the system 3.13 or use a uv-managed Python (`uv python install`, as 005's
+    mask2former-type-pool venv does), which upgrades of the OS don't touch.
 - **Package choices settled on the bench (005 and 006, 2026-10-12).** The image should
   follow them rather than the older setup notes:
   - OpenCV is pip's `opencv-python-headless` (pinned in `requirements.txt`), never apt's
