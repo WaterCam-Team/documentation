@@ -130,6 +130,16 @@ The stage would:
   - After the image is built, list its packages and compare with 005 and 006's
     inventories (WaterCam-Team/documentation `inventories/`) to catch anything that
     crept back in.
+- **Boot current and background jobs (2026-10-13).** Build these in, so a battery unit's
+  boot surge stays low and nothing downloads over cellular on its own:
+  - `config.txt` with stock clocks: no `arm_freq=2000` and no `initial_turbo`
+    (SU-WaterCam #166).
+  - `uhubctl`, `usb-power-off.service` and `usb-power-on.timer` enabled, and the
+    hotplug version of `quectel-gnss.service` (SU-WaterCam #165).
+  - Mask `apt-daily.timer`, `apt-daily-upgrade.timer` and `man-db.timer`; leave out
+    `man-db`; and add a `dpkg.cfg.d` rule excluding `/usr/share/man` and `/usr/share/doc`
+    (keeping the copyright files) before the package stage, so the image never contains
+    them (guide 1.3.2, SU-WaterCam #161).
 
 - **Witty Pi installer.** Don't run UUGear's `install.sh` in the build: it downloads
   at run time and edits files in place. Reproduce its effects instead:
