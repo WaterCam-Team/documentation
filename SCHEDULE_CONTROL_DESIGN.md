@@ -308,12 +308,11 @@ be confused.
 
 ### 5.1 Code and shape
 
-New downlink code pair **`15 95`** (the `NN, NN|0x80` convention; 15 is unused
-in `DOWNLINK_CODE_LENGTHS`, in the API encoders, by the mDot, and by the routing
-design's `1F 9F`). Unlike the other codes it is **length-prefixed**:
+New downlink code pair **`1D 9D`** (the `NN, NN|0x80` convention). Unlike the
+other codes it is **length-prefixed**:
 
 ```
-15 95  LL  OP  <body>
+1D 9D  LL  OP  <body>
 │  │   │   │   └─ op-specific, LL-1 bytes
 │  │   │   └───── 00 preset, 01 custom, 02 revert, 03 query
 │  │   └───────── length of everything after LL
@@ -322,6 +321,26 @@ design's `1F 9F`). Unlike the other codes it is **length-prefixed**:
 
 The length byte is what makes it safe on old nodes (5.5). A schedule command is
 always sent alone, never concatenated with other codes.
+
+**Why `1D 9D`.** It has never been used anywhere, which matters because units on
+older software keep whatever meanings their decoder had:
+
+- `15 95` (the obvious next free pair) is **not** usable. It was a legacy LoRa
+  code, removed from the node's decoder only in SU-WaterCam #186 (2026-10-15).
+  Units still on a pre-#186 commit decode it with the old meaning, and the IP
+  fallback work avoided it for the same reason.
+- Also excluded: `1F 9F` (the routing design's wrapper), `17 97` (IP upload),
+  `1B 9B` and a lone `21` (intercepted by the mDot), and every code in today's
+  `DOWNLINK_CODE_LENGTHS` (`10`-`14`, `16`-`18`, `21 91`, `99 99`).
+- Searched for `1D 9D` in every spelling (`1D 9D`, `1d 9d`, `1D9D`, `1d9d`) and
+  as `0x1D`: no hit in the full git history of SU-WaterCam (`tools/`,
+  `ticktalk_main.py`, all branches), of the API (`app/`, encoders and decoders),
+  or of the mDot firmware's `CommandTerminal/`. The only `0x1D`/`0x9D` hits in
+  the mDot repo are in vendored mbed-os sources.
+- The old LoRa TLV parser compares channel and command **as decimal strings**
+  (`f"{ch:02d}"`), so a code byte can also collide through its decimal value.
+  `0x1D` is `29` and `0x9D` is `157`. Neither `'29'` nor `'157'` appears as a
+  channel or command in any version of the decoder (searched the history too).
 
 ### 5.2 Ops
 
@@ -349,12 +368,12 @@ All integers big-endian, like the other server frames.
 
 | Command | Frame (bare) | Size |
 |---|---|---|
-| Default preset, permanent | `15 95 04 00 00 00 00` | 7 B |
-| Preset 01, offset 20 s, permanent | `15 95 04 00 01 14 00` | 7 B |
-| Custom: 13:00 UTC, every 60 min, 9 wakes, ON 15, every day, offset 0, revert after 48 h | `15 95 0A 01 03 0C 00 3C 09 0F 7F 00 30` | 13 B |
-| Custom: every 3 days, one wake at 16:00 UTC, ON 15 | `15 95 0A 01 03 C0 05 A0 01 0F 83 00 00` | 13 B |
-| Revert to previous if current hash is `1A2B3C4D` | `15 95 06 02 00 1A 2B 3C 4D` | 9 B |
-| Query | `15 95 01 03` | 4 B |
+| Default preset, permanent | `1D 9D 04 00 00 00 00` | 7 B |
+| Preset 01, offset 20 s, permanent | `1D 9D 04 00 01 14 00` | 7 B |
+| Custom: 13:00 UTC, every 60 min, 9 wakes, ON 15, every day, offset 0, revert after 48 h | `1D 9D 0A 01 03 0C 00 3C 09 0F 7F 00 30` | 13 B |
+| Custom: every 3 days, one wake at 16:00 UTC, ON 15 | `1D 9D 0A 01 03 C0 05 A0 01 0F 83 00 00` | 13 B |
+| Revert to previous if current hash is `1A2B3C4D` | `1D 9D 06 02 00 1A 2B 3C 4D` | 9 B |
+| Query | `1D 9D 01 03` | 4 B |
 
 (For the 3-day example, `interval` is 1440 with `count` 1. The period comes from
 `days`.)
@@ -363,10 +382,10 @@ Inside the routing design's sequenced wrapper (kind `05`, seq `SS`):
 
 | Command | Sequenced frame | Size |
 |---|---|---|
-| Default preset, seq 7 | `1F 9F 09 05 07 15 95 04 00 00 00 00` | 12 B |
-| Custom (row 3 above), seq 8 | `1F 9F 0F 05 08 15 95 0A 01 03 0C 00 3C 09 0F 7F 00 30` | 18 B |
-| Revert, seq 9 | `1F 9F 0B 05 09 15 95 06 02 00 1A 2B 3C 4D` | 14 B |
-| Query, seq 10 | `1F 9F 06 05 0A 15 95 01 03` | 9 B |
+| Default preset, seq 7 | `1F 9F 09 05 07 1D 9D 04 00 00 00 00` | 12 B |
+| Custom (row 3 above), seq 8 | `1F 9F 0F 05 08 1D 9D 0A 01 03 0C 00 3C 09 0F 7F 00 30` | 18 B |
+| Revert, seq 9 | `1F 9F 0B 05 09 1D 9D 06 02 00 1A 2B 3C 4D` | 14 B |
+| Query, seq 10 | `1F 9F 06 05 0A 1D 9D 01 03` | 9 B |
 
 ### 5.4 Sizes against LoRa limits
 
@@ -384,18 +403,32 @@ Inside the routing design's sequenced wrapper (kind `05`, seq `SS`):
 
 ### 5.5 Old nodes: traced through the parser
 
-On a node from before this feature, `tools/lora_handler_concurrent.py` `decode`
-does this with `15 95 04 00 00 00 00` (hex string `"15950400000000"`):
+Traced through two decoders: **current** `main` (`7e17c4f`), and **pre-#186**
+(`e92b5ee`, the parent of #186 `28e7699`, which still has the legacy codes
+`15 95`, `22`, `31`, `32`, `40`-`44`). `decode` in
+`tools/lora_handler_concurrent.py` gets `1D 9D 04 00 00 00 00` as the hex string
+`"1D9D0400000000"`:
 
-1. Not `"21"`.
-2. `_parse_server_frame` → `parse_downlink_frame`: code `15 95` isn't in
-   `DOWNLINK_CODE_LENGTHS` → None.
-3. TLV parser: `ch=0x15, cmd=0x95, vlen=0x04`, 4 bytes follow, offset = length →
-   exactly one TLV. `_apply_command_tlv` formats the bytes as decimal
-   (`f"{0x15:02d}"` = `21`, `f"{0x95:02d}"` = `149`), and its hex comparisons
-   (`ch == 0x21`, `ch == 0x18`) don't match either → "Unknown TLV
-   channel/command: 21/149". `decode` returns after a successful TLV parse, so the
-   digit parser never sees it. Nothing applied, no reply.
+1. Not `"21"` (both versions).
+2. `_parse_server_frame` → `tools/transmit_ip.py` `parse_downlink_frame`: code
+   `1D 9D` isn't in `DOWNLINK_CODE_LENGTHS` in either version → None.
+3. TLV parser (the same code in both): `ch=0x1D, cmd=0x9D, vlen=0x04`, 4 bytes
+   follow, offset = length → exactly one TLV. `_apply_command_tlv` formats the
+   bytes as decimal (`f"{0x1D:02d}"` = `29`, `f"{0x9D:02d}"` = `157`).
+   - Current: its decimal branches are `10/90`, `11/91`, `12/92`, `13/93`,
+     `99/00`, its hex branches `ch == 0x21 and cmd == 0x91` and
+     `ch == 0x18 and cmd == 0x98`. None match.
+   - Pre-#186: the same, plus the legacy decimal branches `15/95`, `22/00`,
+     `31/00`, `32/00`, `40/00` to `44/00`. None match `29/157`.
+   - Both print "Unknown TLV channel/command: 29/157". `decode` returns after a
+     successful TLV parse, so the digit parser (whose branches test the first two
+     hex characters, e.g. `'15'` with `'9'` in the pre-#186 version) never sees
+     it. It wouldn't match there either: the first two characters are `1D`.
+4. Nothing applied, no reply, in both versions.
+
+The runtime manager's own parser (`lora_runtime_integration.process_lora_payload`,
+present before #186) isn't on the downlink path: in `e92b5ee` it is called only
+from the module's self-test.
 
 The same holds for every op, because `LL` is by construction the exact rest of
 the frame. The danger is a wrong `LL`. The TLV parser would then go on to read
@@ -405,27 +438,27 @@ start an emergency or a debug session on an old node. Two guards:
 - the API encoder computes `LL` from the body and a unit test runs every
   encodable frame (property-based: random valid specs) through a copy of the old
   `decode` and asserts that no handler runs;
-- old nodes shouldn't receive the frame at all: the API sends `15 95` only to
+- old nodes shouldn't receive the frame at all: the API sends `1D 9D` only to
   units whose reported release has the feature (19).
 
 The mDot forwards it: it is neither exactly one byte `0x21` nor exactly three
 bytes starting `1B 9B`.
 
-Over IP, an old node's `apply_downlink_command` gets a part
-`{"code": "15 95", "payload_hex": "0400000000"}`. The code isn't in
+Over IP, an old node's `apply_downlink_command` (current and pre-#186) gets a
+part `{"code": "1D 9D", "payload_hex": "0400000000"}`. The code isn't in
 `_expected_len`, so there's no length check, and the final `else` logs
-"unrecognised code '15 95'" and skips it. In the routing design's wrapper it is
+"unrecognised code '1D 9D'" and skips it. In the routing design's wrapper it is
 ignored as in its 10.3.
 
 ### 5.6 New nodes: parsing rules
 
-- `parse_downlink_frame` learns one length-prefixed code: for `15 95` the width
+- `parse_downlink_frame` learns one length-prefixed code: for `1D 9D` the width
   is `1 + data[i+2]`. (`DOWNLINK_CODE_LENGTHS` gets a sentinel for it; `1F 9F` is
   still not added, as the routing design requires.)
-- A `15 95` part must be the only part of the frame, `LL` must match, `OP` must
+- A `1D 9D` part must be the only part of the frame, `LL` must match, `OP` must
   be known and its body exactly the right length. Otherwise: rejected (ack
   result 03 if sequenced; report reason 01) and nothing applied.
-- In a sequenced frame, kind `05` may contain only `15 95`.
+- In a sequenced frame, kind `05` may contain only `1D 9D`.
 
 ## 6. Node: validation
 
@@ -772,7 +805,7 @@ When it is sent:
 - once every `lora_full_send_hours` (24) with the full sensor send, through
   `tools/sensor_changes.py` as an exact field.
 
-It is sent only when `report_enabled` is set, which happens on the first `15 95`
+It is sent only when `report_enabled` is set, which happens on the first `1D 9D`
 the node receives. An old API never sends one, so it never gets a channel it
 can't decode. **Assumption,** as for the routing design's `01 0E`: the API's
 TLV detector (`app/decoders.py`) stops at an unknown pair, so an old API sees a
@@ -825,7 +858,7 @@ Recommendation: **retire it as a control, don't map it onto schedules.**
   one.
 - Repurposing the code would give old and new nodes different meanings for the
   same bytes.
-- Code space is cheap: `15 95` is a clean new code.
+- Code space is cheap: `1D 9D` is a clean new code.
 
 Steps:
 
@@ -836,7 +869,7 @@ Steps:
    returns 422 with that message.
 3. Node: keeps accepting `12 92` (it is harmless and an old API may send it) and
    logs "12 92 is deprecated and changes nothing; the wake schedule is set by
-   15 95". `monitoring_frequency` stays a stored, reported number.
+   1D 9D". `monitoring_frequency` stays a stored, reported number.
 4. The dashboard labels the reported `sr_monitoring_frequency` as legacy, or
    stops showing it.
 
@@ -849,7 +882,7 @@ The same applies to `13 93` emergency frequency, which also changes nothing
 |---|---|
 | Class | **N**, non-urgent: held until the unit is heard, never a `!` wake |
 | Kind | **`05` schedule**, its own seq space (`next_seq[device][5]`); the node's `data/command_seq.json` gains `"5"` |
-| Legacy frame inside the wrapper | `15 95 LL OP ...` (5) |
+| Legacy frame inside the wrapper | `1D 9D LL OP ...` (5). Reserved alongside the routing design's `1F 9F` and `01 0E` (its 10.3, 10.4, Q14); `1D 9D` is not `15 95`, which pre-#186 nodes still decode (5.1) |
 | Ack | `01 0E 05 SS RR EM`, results as in the routing design 10.4: 00 applied (including "same hash, nothing to do"), 01 duplicate seq, 02 stale, 03 rejected (the reason is in the `01 0F` report that follows) |
 | Confirmation for the ledger | ack with this seq (any result except 03); or, for a node without seq, a report or status `sc` equal to the desired hash |
 | Expiry | permanent: **7 days** (as configuration). Temporary: **min(7 days, revert hours)**, since after that the temporary schedule would already be over. Query: 1 day |
@@ -883,9 +916,9 @@ The schedule feature can ship first. It needs:
    one job: if the device has a pending schedule command and this uplink came from
    the Pi, send it after a delay (14.4) on a background thread. Pending state
    lives in the `device_schedules` table (17.1), not a general ledger.
-2. **Bare frames** (`15 95 ...`), no wrapper, no seq.
+2. **Bare frames** (`1D 9D ...`), no wrapper, no seq.
 3. **Confirmation by content:** the `01 0F` report (or `sc` in the status JSON)
-   with the desired hash. The node sends the report after every `15 95`, so DR0
+   with the desired hash. The node sends the report after every `1D 9D`, so DR0
    units can confirm (the report is 9 B).
 4. **Ordering without seq:** the API has at most one schedule command in flight
    per device and only ever sends the **current** desired spec. A copy that
@@ -902,7 +935,7 @@ The schedule feature can ship first. It needs:
 
 When routing arrives, the `device_schedules` pending state becomes a ledger
 row of kind `schedule`, frames for seq-capable nodes get the wrapper, and the
-reduced hook is removed. The node accepts bare `15 95` forever (manual tools, old
+reduced hook is removed. The node accepts bare `1D 9D` forever (manual tools, old
 API), without seq checks, as the routing design does for other legacy frames.
 
 ## 13. Neighbourhood operation
@@ -918,7 +951,7 @@ itself sends nothing.
 
 Devices that can't take it are listed, not silently skipped:
 
-- the release is too old (no `15 95`): "update node software first";
+- the release is too old (no `1D 9D`): "update node software first";
 - no LoRa EUI and not IP-active;
 - a manual schedule on the unit (9.5): included only if the operator ticks
   "overwrite manual schedules";
@@ -985,7 +1018,7 @@ to "all at once", because the point is speed, and they revert by themselves.
 
 - devices whose batch command is still held or IP-queued: the command is
   cancelled; their desired schedule goes back to the pre-batch one;
-- devices that confirmed: a revert command, `15 95 06 02 00 <batch hash>`. The
+- devices that confirmed: a revert command, `1D 9D 06 02 00 <batch hash>`. The
   if-hash makes it a no-op (reject 0A, reported) on a unit that has since been
   changed to something else;
 - devices that rejected or expired: nothing to undo.
@@ -1155,8 +1188,8 @@ temporary ones early (Q12).
 | F10 | **DST change** | one wake an hour off at the first boot after the change, until `syncTime.sh` (existing) | UTC spec avoids the twice-yearly file change; Q8 for an RTC in UTC |
 | F11 | **Power loss during install** | old or new schedule, never neither | 7.4 |
 | F12 | **Command during emergency / debug / hold** | must not cut power | install without arming; existing restore paths arm the new file (8.3-8.5) |
-| F13 | **Old node gets `15 95`** | ignored ("Unknown TLV channel/command: 21/149"; IP: "unrecognised code") | 5.5; gating on release; property test against the old decoder |
-| F14 | **New node, old API** | nothing changes: no `15 95` sent, no `01 0F` sent | `report_enabled` only after a `15 95` |
+| F13 | **Old node gets `1D 9D`** | ignored ("Unknown TLV channel/command: 29/157"; IP: "unrecognised code") | 5.5; gating on release; property test against the old decoder |
+| F14 | **New node, old API** | nothing changes: no `1D 9D` sent, no `01 0F` sent | `report_enabled` only after a `1D 9D` |
 | F15 | **API restart** | desired schedules, batches and (with routing) the ledger are in SQLite; nothing lost | a pending command resumes at the next uplink |
 | F16 | **Duplicate or late delivery** | same seq: no-op (01). Same hash, other seq: no-op (00). Older spec after a newer one: rejected stale (02) with seq; without seq, impossible by construction (12, item 4) except across the IP queue, which is kept out | seq; superseding; content hash |
 | F17 | **Expired, never delivered** | the unit keeps its old schedule; desired ≠ reported | dashboard "not delivered"; no auto-resend after expiry, so a stale storm schedule can't land days later |
@@ -1187,7 +1220,7 @@ temporary ones early (Q12).
 | `preset` | int null | |
 | `spec` | JSON | the fields of 4.2 |
 | `spec_hash` | str(8) | 4.5 |
-| `frame_hex` | str | bare `15 95 ...` |
+| `frame_hex` | str | bare `1D 9D ...` |
 | `revert_hours` | int | 0 = permanent |
 | `version` | int | per-device counter for `If-Match` |
 | `state` | str | `pending`, `sent`, `confirmed`, `rejected`, `expired`, `superseded`, `cancelled` |
@@ -1338,7 +1371,7 @@ colour, the preview strip with a text equivalent.
 Order:
 
 1. **Node release A**: `tools/schedule_spec.py`, `tools/schedule_control.py`
-   (install, reconcile, revert, probation), the `15 95` parser, `01 0F`, status
+   (install, reconcile, revert, probation), the `1D 9D` parser, `01 0F`, status
    `sc`/`tzo`, the daemon's `pi_watchdog` action, the lock in `ensure_next_wake`,
    `apply_emergency_schedule`'s fallback through the new generator, the `12 92`
    log line, a reconcile service ordered before ticktalk. The `@GRAPHify` graph
@@ -1385,7 +1418,7 @@ midnight, weekday masks, `0x8N`, offsets 0 and 255.
 - Probation: watchdog-rescued boot → rollback; normal boots → probation counts down.
 - Old-decoder property test: random valid frames through a frozen copy of the
   pre-feature `decode` and `apply_downlink_command` → no handler called (5.5).
-- Parser: length mismatches, unknown ops, `15 95` concatenated with other codes →
+- Parser: length mismatches, unknown ops, `1D 9D` concatenated with other codes →
   rejected.
 - `01 0F` encoding and the 11 B limit; status fields at the end of the list.
 
@@ -1415,7 +1448,7 @@ removed only for the test and restored afterwards.
 | B5 | **Power cut mid-install**: a pause hook (`SCHEDULE_INSTALL_PAUSE_AT=<step>`) and pull the supply at steps 5, 7a, 7b, 8 | every case boots with old or new, a next wake armed, reconcile reporting correctly |
 | B6 | **Two-unit simultaneity**: same spec, offset 0, for 2 days (≥ 10 wakes); then offset 30 s on one | alarm skew from wittyPi.log/powerlog boot lines ≤ 2 s; boot-to-first-uplink skew measured (server receive times); with the offset, uplinks 30 ± a few s apart |
 | B7 | Install over IP (IP unit) | ack/report over IP; queue row handling |
-| B8 | Old release receives `15 95` | "Unknown TLV channel/command: 21/149"; no change; no reply |
+| B8 | Old release receives `1D 9D` | "Unknown TLV channel/command: 29/157"; no change; no reply |
 | B9 | Temporary schedule with `revert` 2 h | reverts at the first shutdown after 2 h; report |
 | B10 | Energy: hourly all-day for 24 h with the powerlog | daily energy within the estimate's range; refines 15.1 |
 | B11 | Long file: a weekday-mask schedule with `count` 24 (336 states) | `runScript.sh` at boot under 5 s; `wait_for_wittypi_schedule` well within 120 s |
@@ -1468,8 +1501,11 @@ confirmed; a batch of 20 simulated units with pacing; API restart mid-batch.
     early below a charge level?
 13. **Expiry** 7 days for permanent schedules with no automatic resend: OK, or
     keep retrying the desired state for as long as it is desired?
-14. **Codes:** `15 95` for the command, `01 0F` for the report, kind `05`: OK to
-    reserve?
+14. **Codes:** `1D 9D` for the command (never used in any repo's history; `15 95`
+    ruled out as a pre-#186 legacy code, 5.1), `01 0F` for the report (also never
+    used), kind `05`: OK to reserve? They should be added to the routing design's
+    own reservation question (its Q14: `1F 9F`, `01 0E`), so the two designs hold
+    one list of reserved codes.
 15. **Permission:** a separate `manage_schedules`, admin only by default?
 16. **Probation:** 3 scheduled wakes, rollback only on a watchdog-rescued boot:
     enough?
@@ -1514,5 +1550,9 @@ confirmed; a batch of 20 simulated units with pacing; API restart mid-batch.
   it**, so collisions from simultaneous wakes silently lose bitmaps until the next
   refresh (24 h). That makes the offset spread more than a nicety for
   neighbourhoods of 10+ units.
-- **`DOWNLINK_CODE_LENGTHS` has only fixed widths.** `15 95` is the first
+- **`15 95`, the next pair in the code sequence, is not free in practice.** It was
+  a legacy code that units on software from before SU-WaterCam #186 still decode
+  with its old meaning. Hence `1D 9D`, a pair never used in any repo (5.1), traced
+  through both the current and the pre-#186 decoder (5.5).
+- **`DOWNLINK_CODE_LENGTHS` has only fixed widths.** `1D 9D` is the first
   length-prefixed code; the new parser needs one special case (5.6).
