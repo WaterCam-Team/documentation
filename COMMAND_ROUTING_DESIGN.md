@@ -1280,8 +1280,10 @@ ledger (`GET /devices/{id}/commands`) and `link`.
     through the router (transport checks, `!` budget, expiry), not raw
     `send_downlink`.
 13. **Doubtful** after 3, probe every 6 h: yes; tune from phase A data.
-14. **`01 0E` (ack) and `1F 9F` (wrapper):** reserve them; check both against
-    the ChirpStack codec and `DOWNLINK_CODE_LENGTHS` before the node work.
+14. **Reserved codes** (one list for both designs): `1F 9F` sequenced wrapper
+    and `01 0E` ack (this design); `1D 9D` schedule command, `01 0F` schedule
+    report and seq kind `05` (schedule control design). Check all against the
+    ChirpStack codec and `DOWNLINK_CODE_LENGTHS` before the node work.
 
 Added in review:
 
