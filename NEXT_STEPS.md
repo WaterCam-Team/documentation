@@ -95,7 +95,8 @@ dashboard.
 ## 9. Open field-power tests
 **Doc:** SU-WaterCam `docs/UNIT006_POWER_FAILURE.md`
 
-- [ ] Run a load test on 006 while the V50 charges from the real panel through its side solar port, in sun.
+- [ ] Run a load test on 006 while its V75 charges from the real panel through the solar jack (3.5 × 1.1 mm), in sun.
+- [ ] Check the V75 in the cold and the heat: does the output come back by itself (Always On) after a cutoff below −15 °C or above 60 °C, and how hot does the enclosure get in sun (charging stops above 45 °C)?
 - [ ] Do a full drain with only the panel connected, the power logger running and `recovery_boot` on, and check that the unit recovers by itself.
 - [ ] Summarise the Witty Pi logs from 008–011: wakes after a power loss, and boots that never set a next wake. This costs a few KB of cellular data per unit, so get approval first.
 - [x] Decide 006's configuration: stock clocks and the packaged kernel, applied 2026-10-06.
@@ -103,13 +104,14 @@ dashboard.
 ## 10. Measure battery charge
 **Doc:** SU-WaterCam `docs/POWER_ANALYSIS.md`, section *Battery state of charge*
 
-Units have no state-of-charge sensor, and since SU-WaterCam #122 they send no battery percentage. The voltage-based one was noise. Plan: read the V50's own charge signal (about half the cell voltage on its USB-C D+ pin) through the mDot's free `PB_0` ADC.
+Units have no state-of-charge sensor, and since SU-WaterCam #122 they send no battery percentage. The voltage-based one was noise. Plan: read the pack's own charge signal with the mDot's ADC. All current units have the new-design Voltaic V75, which puts it on the SBU pins (A8/B8) of its USB-C PD port; old-design packs used D+ (about half the cell voltage).
 
-- [ ] Confirm the field V50s are the "Always On" model the D+ signal is documented for.
-- [ ] Prototype on one unit: a USB-C breakout in the V50's top port with only D+ and GND connected, D+ to mDot `PB_0` through about 10 kΩ, and 100 nF to GND.
+- [x] Confirm the field packs are Always On models: all units have new-design V75s, wired to both USB-A ports (2026-10-17).
+- [ ] Measure the V75's SBU signal against the cell voltage on the bench (the scale isn't published) and check it fits under the mDot's 3.0 V ADC reference.
+- [ ] Prototype on one unit: a USB-C breakout in the V75's top port with only SBU and GND connected (no VBUS, no CC), SBU to mDot `PB_0` through about 10 kΩ, and 100 nF to GND. First check that this doesn't switch Always On off on the A ports.
 - [ ] mDot-AT-firmware: an AT command that reads `AnalogIn(PB_0)` (Mbed Studio build).
-- [ ] SU-WaterCam `battery_manager.py`: a first path that asks the mDot through the LoRa daemon; fix `CELL_V_MIN` (V50 cuts out near 3.45 V/cell) and the INA260 path's coulomb counting.
-- [ ] Calibrate D+ against charge during the full drain test (section 9), logging D+ once a minute.
+- [ ] SU-WaterCam `battery_manager.py`: a first path that asks the mDot through the LoRa daemon; fix `CELL_V_MIN` (the V50 cut out near 3.45 V/cell; find the V75's point) and the INA260 path's coulomb counting.
+- [ ] Calibrate the signal against charge during the full drain test (section 9), logging it once a minute.
 
 ## 11. Finish the v6 HAT board
 **Repo:** pcb-designs, PR #3 (draft); see `SESSION_HANDOFF.md`
@@ -118,7 +120,7 @@ Units have no state-of-charge sensor, and since SU-WaterCam #122 they send no ba
 - [ ] **Verify BNO055 (U2) pad 1 against the physical breakout.** The footprint has no orientation marking, and a reversed part puts 3.3 V on RST.
 - [ ] Fix the `MDOT:MTDOT` footprint: it has a duplicate pad 24 and no pad 28.
 - [ ] Settle the open assembly choices (BNO055 JP2, R6/R7, R3's footprint, HAT EEPROM), build the fab package, and order samples from OSHPark.
-- [ ] Add a connector for the V50 D+ charge signal to mDot `PB_0` (section 10). The mDot symbol's pin numbers don't match MultiTech's guide (PB0/PB1 and PA0/PA7 are swapped), so lay out by pin name.
+- [ ] Add a connector for the pack's charge signal (SBU on the V75) to mDot `PB_0` (section 10). The mDot symbol's pin numbers don't match MultiTech's guide (PB0/PB1 and PA0/PA7 are swapped), so lay out by pin name.
 
 ## 12. Later
 - [ ] Cap how long emergency mode can run (e.g. 6–8 h), then fall back to frequent scheduled wakes. Emergency mode keeps a unit on continuously, about 70–110 Wh/day.
