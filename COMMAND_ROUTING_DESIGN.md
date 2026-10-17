@@ -31,7 +31,7 @@ code and need a bench check or a captured payload.
 16. Failure modes and their consequences
 17. Testing plan
 18. Rollout plan
-19. Open questions
+19. Decisions (review 2026-10-17)
 20. Where the code differs from the agreed direction
 
 ---
@@ -60,9 +60,10 @@ API #163 made `ip-upload` go over LoRa for any unit with an EUI, which fixed tha
 one command. The underlying problem is still there: the route depends on a
 stored mode that drifts away from what the unit can do now.
 
-**Fleet policy (from the user):** every unit except one IP-only bench unit
-uploads over LoRa whenever it can. IP is a fallback, and routine only during an
-IP test phase. Commands should follow the same policy: LoRa first, IP when LoRa
+**Fleet policy (from the user):** every unit uploads over LoRa whenever it can.
+IP is a fallback, and routine only during an IP test phase or on a unit with
+marginal LoRa coverage, which still prefers LoRa but in practice relies on WiFi
+or cellular. Commands should follow the same policy: LoRa first, IP when LoRa
 isn't working, decided from what the server has actually seen recently.
 
 ## 2. Goals and non-goals
@@ -196,7 +197,7 @@ node's clock is never used, so a wrong node RTC doesn't matter (see 16).
 
 - **LoRa-active**: the device has a `lora_eui`, and `now - lora_at <= W_lora`.
   A unit with an EUI that has never been heard over LoRa (no `lora_at`) is
-  **not** LoRa-active. It needs no override; the IP-only bench unit falls out of
+  **not** LoRa-active. An IP-only unit needs no override; it falls out of
   this naturally.
 - **Pi-awake-on-LoRa**: `now - lora_pi_at <= 10 min`. Used only for timing
   sends (7) and counting doubtful (4.4), never to choose the route.
@@ -211,12 +212,12 @@ node's clock is never used, so a wrong node RTC doesn't matter (see 16).
   failing, and never otherwise. It does pick up a queued command
   (`want_command` is always set, SU-WaterCam `ticktalk_main.py`
   `ip_uplink_transmit`), so a queued command may still arrive that way as a
-  bonus. See open question Q2.
+  bonus. Decided in Q2.
 - Only **authenticated** IP requests count (`device_auth.token_matches` passed),
   once the device has a token. Otherwise a spoofed uplink could make a unit look
-  IP-active and pull its commands into a queue the attacker then drains. Until
-  every unit has a token, a device without one counts its unauthenticated polls
-  (same as today's trust level) and the dashboard says so. See Q8.
+  IP-active and pull its commands into a queue the attacker then drains.
+  Strict from the start (Q8): `IP_AUTH` is `enforce`, so a contact without a
+  valid token doesn't count.
 
 ### 4.3 Windows
 
@@ -260,7 +261,8 @@ Why each part:
   (2-hourly around the clock) has a normal gap of 2 h, which gives 3 h. The
   floor of 6 h stops a short ChirpStack or gateway hiccup from flipping routing.
 - **Ceiling 48 h.** Keeps the window bounded on a unit with a very sparse
-  schedule (`monitoring_freq_h` = 72 would need its own handling; see 16).
+  schedule. No unit uses a gap over 32 h (the 72 h monitoring option is
+  unused), so no special handling is needed (Q6).
 - **Emergency mode** makes the interval short and the unit awake. The normal
   gap is still the overnight one from the days before, so the window doesn't
   shrink suddenly when emergency mode starts.
@@ -374,8 +376,15 @@ Rules that apply in every state:
   and IP for a poll, where the router creates the queue row just before
   `pending_command` runs, so the same poll gets it.
 - A poll from a LoRa-active, non-doubtful unit does **not** release held N
-  commands to IP (policy: LoRa first). Q3 proposes one exception: a poll at the
-  end of a wake in which LoRa heard nothing.
+  commands to IP (policy: LoRa first), with one exception (Q3, decided):
+  **per-wake fallback.** When an IP-active unit polls, any N command that was
+  not confirmed over LoRa in that wake (none was sent because LoRa heard
+  nothing, or it was sent and not confirmed) is handed over in that poll. A
+  dual unit, and especially one with marginal LoRa, then gets each command
+  within one wake either way. Duplicates are covered by the seq on new nodes;
+  on old nodes a repeated config is harmless and a repeated `17 97` costs at
+  most a few extra uploads. No extra cellular data: the poll rides on the
+  wake's routine upload.
 
 ## 7. Holding a command until the next uplink
 
@@ -477,7 +486,7 @@ instead of `held`.
 |---|---|---|---|
 | U, S1 | node_delivery as today: 60 s, `!`, resends until 240 s after the `!`: about 5 min | the delivery ends unconfirmed **and** the unit is IP-active at that moment | the node's next poll: the end-of-cycle check (`tools/last_downlink_check.py`, before shutdown) if it is awake, else its next wake (2 h by day, up to the overnight gap) |
 | U, S2/S4/S6 | as above | never directly. Held, and retried on each Pi uplink. If the unit becomes IP-active before expiry (state changes to S1/S3/S5), the next router tick moves it to IP | — |
-| N, S1 | send on next Pi uplink, up to 3 attempts | (a) 3 attempts in awake wakes unconfirmed (the unit is then also counted toward doubtful), or (b) the unit stops being LoRa-active (`now - lora_at > W_lora`): no LoRa uplink within the window | as above |
+| N, S1 | send on next Pi uplink | (0) the unit polls IP at the end of a wake in which it wasn't confirmed over LoRa (per-wake fallback, 6); else (a) 3 attempts in awake wakes unconfirmed (the unit is then also counted toward doubtful), or (b) the unit stops being LoRa-active (`now - lora_at > W_lora`): no LoRa uplink within the window | as above |
 | N, S2 | as above | never; held until expiry | — |
 | any, S3/S5 | — | immediately (IP is the route) | as above |
 
@@ -913,8 +922,9 @@ working unchanged during the transition.
 - Migration: set **every** existing row to `auto`. Today's values can't be told
   apart: most `ip` values were written by the auto-flip, and `lora` is the
   column default. After the migration the operator sets `ip` on any unit that
-  must never use LoRa (Q1). The IP-only bench unit doesn't need it if it has
-  never been heard over LoRa (4.2).
+  must never use LoRa (Q1). None is planned: a unit with marginal LoRa that
+  relies on WiFi or cellular stays on `auto`, so it still prefers LoRa and
+  falls back to IP per wake (rule in 6).
 - `ip_uplink` no longer writes `transport_type`. **This is the auto-flip
   removal.** `get_or_create_device` still creates unknown devices (with `auto`).
 - `GET /devices` keeps `transport_type` (now the override) and adds `link`
@@ -1109,7 +1119,7 @@ Order:
 | # | Failure | Consequence | Mitigation |
 |---|---|---|---|
 | 1 | **Stale window, unit dead or LoRa gone**: still "LoRa-active" for up to `W_lora` (≤ 48 h) after its last uplink | U commands go to LoRa, use a `!`, then fall back to IP after ~5 min if IP-active (fine). N commands are held until the unit stops being LoRa-active, then go to IP. Without IP they wait until expiry | dashboard shows "last heard"; `silent` alert at 20 h; the window uses the median of daily maxima so it doesn't stretch after outages |
-| 2 | **Window too short** (an unusual schedule, e.g. `monitoring_freq_h` = 72, or a unit just changed schedule) | a healthy unit counts as not LoRa-active: N commands go to IP (if IP-active) or are held for first contact. No loss, just the wrong route for a while | floor 6 h and ceiling 48 h; a 72 h schedule exceeds the ceiling, so such units need override `lora` (documented; Q6) |
+| 2 | **Window too short** (a unit just changed schedule) | a healthy unit counts as not LoRa-active: N commands go to IP (if IP-active) or are held for first contact. No loss, just the wrong route for a while | floor 6 h and ceiling 48 h; a 72 h schedule exceeds the ceiling, so such units need override `lora` (documented; Q6) |
 | 3 | **LoRa lost mid-delivery** | U: unconfirmed → IP queue (S1) or held (S2). N: back to held, retried on the next uplink | ledger state; resend uses the same seq |
 | 4 | **DR0: replies can't be sent** | legacy nodes: no LoRa confirmation at all, so U deliveries end unconfirmed (and get an IP copy if IP-active: a duplicate, effects in 10.1), and N retries 3 times. New nodes: the 6 B ack fits | 4.4 excludes these from doubtful; 6 B ack; DR is now recorded, so the dashboard can say "DR0: the node can't confirm" |
 | 5 | **Downlinks fail, uplinks fine** (gateway TX, RX2 mismatch, `AT+CPROC=0`) | counted as doubtful after 3 → S3/S4 | `lora_downlink` alert; probes every 6 h clear it once fixed |
@@ -1141,6 +1151,8 @@ Order:
 
 - `routing.route`: every class × override × state (S1-S7) × EUI × seq_capable,
   table-driven from section 6, so the table and the code can't drift.
+- Per-wake fallback: an IP-active unit's poll hands over N commands not
+  confirmed over LoRa in that wake, and none confirmed in it.
 - Windows: synthetic wake rings (daylight 2-hourly with a 15 h night, 24 h
   2-hourly, emergency 5 min, one 72 h outage in the 7 days, < 3 days of history)
   → expected `W`.
@@ -1230,7 +1242,9 @@ ledger (`GET /devices/{id}/commands`) and `link`.
    days; `legacy` is the rollback switch.
 4. Node release to the test unit; bench tests B1-B10 (B3-B6 need phase C on a
    staging API or with `SEQ_FRAMES=1` for that device only: a per-device
-   allow-list). Then the other bench unit, then field units at their normal
+   allow-list). Then the other bench unit. Then, first among field units, the
+   unit with marginal LoRa (it is likely at DR0, where only the 6 B ack can
+   confirm anything), then the rest at their normal
    update (over WiFi only, per the node update procedure).
 5. API phase C (`SEQ_FRAMES=1`) once at least the bench units are capable.
 6. Update the docs: SU-WaterCam `docs/IP_TRANSMISSION.md` (the "auto-sets
@@ -1238,42 +1252,44 @@ ledger (`GET /devices/{id}/commands`) and `link`.
    (routing, the wrapper), API `docs/` for the new routes, and the dashboard
    help text.
 
-## 19. Open questions
+## 19. Decisions (review 2026-10-17)
 
-1. **Migration of `transport_type`:** set all devices to `auto`? Should the
-   IP-only bench unit get `ip` explicitly (does it have a `lora_eui`, and has it
-   ever been heard over LoRa)? What should happen to undelivered IP queue rows
-   older than 7 days at migration: expire them (proposed) or leave them?
-2. Should **IP fallback uploads** (`ip_fallback: true`) count toward
-   IP-active? Proposed: no, because they aren't on a schedule. The cost is that
-   a LoRa-failing unit doing fallback uploads gets no IP fallback for commands,
-   but those uploads would still pick up whatever is queued.
-3. **Wake with no LoRa uplink:** if a held N command exists and the unit polls
-   IP at the end of a wake in which no LoRa uplink was heard, hand it over IP
-   right then, instead of waiting for the window to close? It is faster
-   fallback for dual units and still LoRa-first in normal wakes.
-4. **Emergency off / remote debug stop:** OK to send them without `!` and to
-   hold them when unanswered (5)?
-5. **`!` budget:** 1 per command and 4 per device per 24 h. Right numbers? Do
-   gauge triggers count toward it?
-6. **Window formula:** the median of daily maxima instead of the longest gap
-   (outage-robust)? Clamp 6-48 h? Do any units run schedules with gaps over
-   32 h (the 72 h monitoring option)?
-7. **Expiry** for emergency off (24 h or the "on" deadline) and remote debug
-   stop (4 h): OK?
-8. **Security:** make "only authenticated IP contacts count toward IP-active"
-   strict now, which needs IP tokens on every unit that uses IP, or accept
-   today's trust level until the token rollout ends?
-9. **Node linger:** should the node wait up to 30 s before halting after a LoRa
-   uplink, to catch a held command released by its last uplink?
-10. **Capability gating:** gate sequenced frames on the `01 09` software version
-    (proposed), or an explicit flag per device set by the operator?
-11. **Splitting `17 97` out of configuration:** OK that a `/downlink` with
-    `ip_upload_wakes` becomes two commands?
-12. **Weather scheduler:** route its `!` through the router (resolve the
-    `dev_eui` list to devices)? Today it bypasses transport entirely.
-13. **Doubtful threshold** 3, and a probe every 6 h: OK?
-14. **Ack channel number** `01 0E` and the wrapper code `1F 9F`: OK to reserve?
+1. **Migration:** every device to `auto`; undelivered IP queue rows older than
+   7 days expire at migration. No unit gets `ip`: the unit expected to have
+   marginal LoRa should still prefer LoRa, relying on WiFi or cellular in
+   practice, so it stays `auto` and gets the per-wake fallback (6).
+2. **IP fallback uploads** don't count toward IP-active. They still pick up
+   whatever is queued.
+3. **Wake without LoRa confirmation:** yes, extended to per-wake fallback for
+   IP-active units: commands not confirmed over LoRa in a wake go out in that
+   wake's IP poll (6, 8).
+4. **Emergency off / remote debug stop:** no `!`; held when unanswered.
+5. **`!` budget:** 1 per command, 4 per device per 24 h. Gauge-triggered
+   emergencies don't count toward it: a flood is never blocked by a budget.
+6. **Window formula:** median of daily maxima, clamp 6-48 h. No unit uses gaps
+   over 32 h (the 72 h option is unused).
+7. **Expiry:** emergency off at the "on" deadline, else 24 h; debug stop 4 h.
+8. **Security:** strict now. `IP_AUTH` is `enforce` and the units that use IP
+   have tokens, so only authenticated contacts count toward IP-active. Check
+   each returning unit's token before it relies on IP.
+9. **Node linger:** not now. Release on the first uplink of a wake plus the
+   end-of-cycle check should do; revisit if phase A shows misses.
+10. **Capability gating:** by the `01 09` software version.
+11. **`17 97` split** out of configuration into its own command: yes.
+12. **Weather scheduler:** not built yet (planned). When it is, it sends
+    through the router (transport checks, `!` budget, expiry), not raw
+    `send_downlink`.
+13. **Doubtful** after 3, probe every 6 h: yes; tune from phase A data.
+14. **`01 0E` (ack) and `1F 9F` (wrapper):** reserve them; check both against
+    the ChirpStack codec and `DOWNLINK_CODE_LENGTHS` before the node work.
+
+Added in review:
+
+- **Marginal LoRa units:** the router shows recent RSSI, SNR and DR per unit,
+  and Power On / watchdog (LoRa only) warn "LoRa marginal: Power On may not
+  arrive" when the link is poor. A false "doubtful" on such a unit is harmless:
+  its commands go over IP, which suits it.
+- **Rollout:** that unit gets the node release first among field units (18).
 
 ## 20. Where the code differs from the agreed direction
 
