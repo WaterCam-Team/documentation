@@ -36,7 +36,7 @@ code and need a bench check, a captured payload or a unit test.
 19. Deploy order and compatibility
 20. Testing plan
 21. Rollout plan
-22. Open questions
+22. Decisions (review 2026-10-17)
 23. Where the code differs from what the plan assumed
 
 ---
@@ -286,6 +286,8 @@ Initial table (append-only; an index never changes meaning):
 | 00 | Daylight, every 2 h (**default**) | 780 (13:00), 120, 5, 15, `7F` | `watercam_daylight_2h.wpi` |
 | 01 | Day and evening, every 2 h | 660 (11:00), 120, 9, 15, `7F` | `watercam_on15_off1h45_offnight.wpi` |
 | 02 | Hourly, all day | 0, 60, 0, 10, `7F` | `watercam_10minutes_per_hour.wpi` |
+| 03 | Storm: hourly, daylight | 780 (13:00), 60, 9, 15, `7F` | — (new) |
+| 04 | Storm: every 30 min, daylight | 780 (13:00), 30, 17, 15, `7F` | — (new) |
 
 `offset` and `revert` are not part of a preset: they come with the command (5.3).
 New presets need a node release and an API release with the same table. The API
@@ -473,7 +475,7 @@ rules, numbers and test vectors as the API's preview (17.4).
 | V3 | `interval − on ≥ 5` min (windowed and all-day) | the Pi must be off before the next alarm: halt, the 7 s power-cut delay, and `ensure_next_wake`'s 120 s margin, or the slot is skipped or cached | 04 |
 | V4 | `on ≥ 10` min | the worst normal wake: about 2 min of cycle, plus up to about 2 min if the RTC was bad (`beforeScript.sh` then blocks on `syncTime.sh`: 30 s sleep, up to 100 s of GPS), plus a cellular fallback upload (`cellular_up` allows 90 s, Tailscale more), the last downlink check, and a recovery boot's up to 2 min wait for the daemon | 02 |
 | V5 | `on ≤ max_awake_minutes` (60) | above that `max_awake` ends the wake anyway; a warning on the API, a hard limit on the node | 02 |
-| V6 | `max_gap ≤ 72 h` | the alarm can only be armed about 28 days ahead (no month field); the server retires units silent for 7 days (`ALERT_RETIRED_DAYS`); 72 h keeps the watchdog rule (V7) well inside its 168 h maximum. Q4 asks whether to allow more | 05 |
+| V6 | `max_gap ≤ 16 h` (decided, Q4) | the default preset's overnight gap is exactly 16 h and nothing uses longer gaps. Up to 16 h the watchdog stays at its 20 h default (6.1), and the 20 h silent alert and the routing design's LoRa window need no change. The wire format keeps multi-day `days` values for later; the node rejects them for now | 05 |
 | V7 | the mDot watchdog can be set to `wdog_needed` (6.1), or the unit has no mDot | otherwise a stranded unit would be pressed too early (every night) or never | 07 |
 | V8 | permanent schedules: `wakes_per_day ≤ schedule_max_permanent_wakes` (default 48); temporary (`revert` 1-72 h): up to 96 | energy (15). A dense schedule is allowed only if it ends by itself | 06 |
 | V9 | the generated file parses with `recovery_boot.parse_schedule`, `next_on_start(now + 120 s)` exists and is within `max_gap` of now, and the parsed slots equal the spec's | self-check: the code that will arm the wake agrees with the spec | 08 |
@@ -501,7 +503,10 @@ wdog_needed = clamp(ceil(max_gap_h) + 4, 20, 168)
   sooner, but a too-low value presses the switch at night on a healthy unit.
   Q5 asks whether to go lower.
 - For the default preset: `max_gap` 16 h → 20 h, today's value.
-- For a 72 h schedule: 76 h.
+- **With V6 at 16 h (decided), `wdog_needed` is always 20 h**, today's default,
+  so the first release doesn't adjust the watchdog: install steps 5 and 9 (7.1)
+  are skipped, and V7 only checks that the mDot reports 20 h or more. The rest
+  of this section is the design for when longer gaps are allowed.
 
 Who sets it: **the node, through the LoRa daemon, as part of the install**,
 using a new daemon socket action `{"action": "pi_watchdog", "params": {"hours":
@@ -527,6 +532,9 @@ warns that nothing would rescue a stranded unit.
 The API can still read the value: the mDot's `WDOG:<h>` answer and the report's
 flag. The existing `POST /devices/{id}/watchdog` stays for manual use. The
 dashboard warns when a manual value is below the schedule's `wdog_needed`.
+
+The firmware (v4.1.5-wc2610) answers `WDOG:<h>!` when the new value was set but
+**not saved** to flash. The daemon treats a trailing `!` as a failure.
 
 **Assumption:** sending `AT+WDOG` while the Class C processor runs is safe. It is
 an ordinary AT command the firmware accepts at any time (`CmdPiWatchdog.cpp`), but
@@ -568,14 +576,14 @@ watchdog round trip. **Assumption:** to be timed on the bench.
  2. same hash as the schedule in force and same revert?   → no-op: ack 00 (01 if same seq), report
  3. generate the .wpi text; self-check (V9)
  4. state.json: {"phase": "installing", new, old}         (atomic write, tools/config_io.py)
- 5. wdog_needed > current?  raise it now (6.1)            → fail: reject 07, phase back to "idle"
+ 5. wdog_needed > current?  raise it now (6.1; skipped while V6 ≤ 16 h)           → fail: reject 07, phase back to "idle"
  6. backup: schedule.wpi → data/schedule/previous.wpi (+ meta)
            first run only: → data/schedule/baseline.wpi
  7. write ~/wittypi/schedule.wpi.tmp, fsync, rename over schedule.wpi, fsync the directory
  8. arm (7.2), read the alarm back, check with ensure_next_wake.decide()
                                                           → fail: restore previous.wpi (rename), re-arm it,
                                                             reject 08
- 9. wdog_needed < current?  lower it now
+ 9. wdog_needed < current?  lower it now (skipped while V6 ≤ 16 h)
 10. state.json: {"phase": "idle", current = new, previous = old, installed_at,
                  revert_at, probation: 3}
 11. log to wittyPi.log (7.3); ack 00; report (9.3); status JSON as today
@@ -761,22 +769,26 @@ schedule because of it.
 
 ### 9.2 Probation and automatic rollback
 
-A unit can't see that it failed to wake. It can see that it was rescued. After an
-install, the new schedule is **on probation** for 3 scheduled wakes (boots with
-start reason 1, "scheduled startup", or a recovered dip inside the window). At
-each boot, reconcile asks the daemon for `AT+WDOG?`. If the mDot reports presses
-since the last power (`<presses since>` > 0, so the watchdog had to start this
-boot) while the schedule is on probation, reconcile **rolls back to the
-previous schedule** before ticktalk starts: steps 6-10 with source "rollback",
-flag bit 3. The next report tells the server.
+A unit can't see that it failed to wake, but at the next boot it can see how
+long it was off. After an install, the new schedule is **on probation** for 3
+scheduled wakes (boots with start reason 1, "scheduled startup", or a recovered
+dip inside the window).
 
-It also rolls back if the boot is a power-restore recovery boot and the schedule
-on probation has no slot within `max_gap` of now. That can only happen if V9
-missed something.
+At each boot during probation, reconcile computes the off-time: now minus the
+last shutdown time (the shutdown mark in `wittyPi.log`, also used by
+`rtc-early-clock`). If the off-time is longer than the probation schedule's
+`max_gap` + 1 h, the schedule missed at least one wake, whatever then woke the
+unit (mDot watchdog press, `!`, button, power restore). Reconcile **rolls back
+to the previous schedule** before ticktalk starts: steps 6-10 with source
+"rollback", flag bit 3. The next report tells the server.
 
-**Assumption:** "presses since" resets when the Pi gets power, so a non-zero
-value at boot means this boot came from a watchdog press. To be confirmed in
-`PiWatchdog.h` and on the bench.
+Why not the mDot's press count (the first draft): the firmware resets
+`presses` the moment the Pi has power (`PiWatchdog.h`, `pi_watchdog_step`), so
+`AT+WDOG?` at boot always reads 0 presses. The off-time works without a
+firmware change and also catches rescues that weren't watchdog presses.
+
+The server adds its own check: an alert when a unit misses its first expected
+wake on a new schedule (±10 min, 17.6).
 
 ### 9.3 Reporting the schedule in force
 
@@ -1178,7 +1190,7 @@ temporary ones early (Q12).
 |---|---|---|---|
 | F1 | **A schedule that never wakes** (no slot, END passed, BEGIN far ahead, WAIT state) | stranded until the watchdog | can't be generated: fixed epoch in the past, END 2037-12-31, no WAIT; V9 requires a slot within `max_gap`; watchdog; probation rollback |
 | F2 | **A slot armed too close** (< 2 min) | the Pi isn't off in time: the alarm is cached (reason 8) or missed | V3 (OFF ≥ 5 min); arming uses `now + 120 s`, as `ensure_next_wake` does |
-| F3 | **Arming > 28 days ahead** (no month field) | the alarm fires on the wrong month's day | V6 caps gaps at 72 h |
+| F3 | **Arming > 28 days ahead** (no month field) | the alarm fires on the wrong month's day | V6 caps gaps at 16 h |
 | F4 | **Too frequent / always on** | battery drain | OFF ≥ 5 min and interval ≥ 15 min (can't express always on); energy guard 15.2; node hard limit V8; temporary revert |
 | F5 | **ON window too short** | the Witty Pi shuts the Pi down mid-cycle; data lost, wakes continue | V4 (≥ 10 min); preview warns if below the unit's reported cycle length |
 | F6 | **Watchdog shorter than the gap** | a healthy unit is pressed during its gap (an extra night wake, energy) | the node raises it first (6.1); dashboard warns about manual values |
@@ -1415,7 +1427,8 @@ midnight, weekday masks, `0x8N`, offsets 0 and 255.
 - Emergency, debug session and hold flag: arming skipped or startup-only; the
   shutdown alarm never written.
 - Revert: due at boot and at shutdown; chain rules.
-- Probation: watchdog-rescued boot → rollback; normal boots → probation counts down.
+- Probation: a boot after an off-time longer than `max_gap` + 1 h → rollback,
+  whatever woke the unit; normal boots → probation counts down.
 - Old-decoder property test: random valid frames through a frozen copy of the
   pre-feature `decode` and `apply_downlink_command` → no handler called (5.5).
 - Parser: length mismatches, unknown ops, `1D 9D` concatenated with other codes →
@@ -1444,7 +1457,7 @@ removed only for the test and restored afterwards.
 | B1 | Preset and custom install over LoRa mid-wake | ack + report; registers 27-30 show the new slot; wittyPi.log shows both lines; the next wake at the new time; `ensure_next_wake` at shutdown "left as it is" |
 | B2 | Install during emergency mode | shutdown alarm stays cleared; flag bit 1; ending emergency arms the new schedule |
 | B3 | Install during a remote debug session | the session isn't cut; stop arms the new schedule |
-| B4 | **Deliberately bad schedule**, proving the nets: with validation bypassed (a bench-only `--unsafe` flag), install a file with no slot ahead and set `AT+WDOG=1` | the unit stays off; the watchdog presses after 1 h; reconcile sees the press and rolls back; the report has flag bit 3; the API raises `schedule_first_wake` before that. Then the same with `!` instead of waiting |
+| B4 | **Deliberately bad schedule**, proving the nets: with validation bypassed (a bench-only `--unsafe` flag), install a file with no slot ahead and set `AT+WDOG=1` | the unit stays off; the watchdog presses after 1 h; reconcile sees the off-time is longer than `max_gap` + 1 h and rolls back; the report has flag bit 3; the API raises `schedule_first_wake` before that. Then the same with `!` instead of waiting |
 | B5 | **Power cut mid-install**: a pause hook (`SCHEDULE_INSTALL_PAUSE_AT=<step>`) and pull the supply at steps 5, 7a, 7b, 8 | every case boots with old or new, a next wake armed, reconcile reporting correctly |
 | B6 | **Two-unit simultaneity**: same spec, offset 0, for 2 days (≥ 10 wakes); then offset 30 s on one | alarm skew from wittyPi.log/powerlog boot lines ≤ 2 s; boot-to-first-uplink skew measured (server receive times); with the offset, uplinks 30 ± a few s apart |
 | B7 | Install over IP (IP unit) | ack/report over IP; queue row handling |
@@ -1475,40 +1488,35 @@ confirmed; a batch of 20 simulated units with pacing; API restart mid-batch.
    then a permanent change with canary.
 6. Then generally. The routing design's kind 05 follows its own phase C.
 
-## 22. Open questions
+## 22. Decisions (review 2026-10-17)
 
-1. **UTC on the wire**, local in the dashboard, slots fixed in UTC (so they move
-   an hour on the wall clock with DST): OK?
-2. **Preset table:** the three shipped schedules as 00-02 with 00 the default.
-   More (hourly daylight, every 30 min daylight) now or later?
-3. **Limits:** interval ≥ 15 min, ON 10-60 min, OFF ≥ 5 min, `count` ≤ 96.
-   Right numbers? Is 10 min of ON enough on cellular-fallback units?
-4. **Longest gap 72 h** (V6). Allow up to 7 days (watchdog 168 h, and units would
-   need excluding from "retired after 7 days")?
-5. **Watchdog floor 20 h:** keep it, or allow `max_gap + 4 h` down to about 6 h for
-   dense schedules, for faster rescue?
-6. **Temporary over temporary:** revert to the last permanent schedule (proposed)
-   or to the one immediately before?
-7. **Energy guard levels** 4 / 8 Wh/day and the node's 48 permanent wakes/day:
-   right? Should the node limit be settable remotely at all (proposed: no)?
-8. **RTC in UTC** to remove the DST-hour error: worth a separate change to the
-   Witty Pi scripts?
-9. **Clock unverified:** install and flag (proposed) or refuse?
-10. **`13 93` emergency frequency** also does nothing: retire it the same way?
-11. **Neighbourhood spread** default `min(120, 10 × N)` s, and canary default on
-    for permanent and off for temporary schedules: OK?
-12. **Battery-aware guard** once the V50 D+ reading exists: refuse or revert
-    early below a charge level?
-13. **Expiry** 7 days for permanent schedules with no automatic resend: OK, or
-    keep retrying the desired state for as long as it is desired?
-14. **Codes:** `1D 9D` for the command (never used in any repo's history; `15 95`
-    ruled out as a pre-#186 legacy code, 5.1), `01 0F` for the report (also never
-    used), kind `05`: OK to reserve? They should be added to the routing design's
-    own reservation question (its Q14: `1F 9F`, `01 0E`), so the two designs hold
-    one list of reserved codes.
-15. **Permission:** a separate `manage_schedules`, admin only by default?
-16. **Probation:** 3 scheduled wakes, rollback only on a watchdog-rescued boot:
-    enough?
+1. **UTC on the wire**, local time on the dashboard, slots fixed in UTC: yes.
+2. **Presets:** 00-02 as shipped (00 the default), plus two storm presets now:
+   03 hourly by day, 04 every 30 min by day (4.4).
+3. **Limits:** interval ≥ 15 min, ON 10-60 min, OFF ≥ 5 min, `count` ≤ 96: OK.
+   Presets use ON 15, which also suits units relying on cellular.
+4. **Longest gap: 16 h for now** (V6), not 72 h. Nothing uses longer gaps. The
+   watchdog then stays at 20 h, and the silent alert and the routing window
+   are unchanged. Multi-day `days` values stay in the wire format for later.
+5. **Watchdog floor 20 h:** keep (moot under the 16 h cap).
+6. **Temporary over temporary:** revert to the last permanent schedule.
+7. **Energy guard** 4 / 8 Wh/day and the node's 48 permanent wakes/day: OK; the
+   node limit is local only (not settable remotely). Off-state figures to be
+   updated after the off-state measurement with an mDot fitted.
+8. **RTC in UTC:** not now.
+9. **Clock unverified:** install and flag.
+10. **`13 93`:** retire it the same way as `12 92`.
+11. **Spread** `min(120, 10 × N)` s; canary on for permanent, off for temporary:
+    OK.
+12. **Battery-aware guard:** parked until the V50 battery reading exists.
+13. **Expiry** 7 days, no automatic resend: OK (the routing design's per-wake
+    IP fallback covers units on IP).
+14. **Codes:** reserve `1D 9D`, `01 0F` and kind `05`, kept in one list with the
+    routing design's `1F 9F` and `01 0E`.
+15. **Permission:** a separate `manage_schedules`, admin only by default.
+16. **Probation:** 3 scheduled wakes; rollback triggered by the off-time at
+    boot (9.2), not the mDot's press count; plus a server alert on a missed first
+    wake.
 
 ## 23. Where the code differs from what the plan assumed
 
@@ -1554,5 +1562,11 @@ confirmed; a batch of 20 simulated units with pacing; API restart mid-batch.
   a legacy code that units on software from before SU-WaterCam #186 still decode
   with its old meaning. Hence `1D 9D`, a pair never used in any repo (5.1), traced
   through both the current and the pre-#186 decoder (5.5).
+- **The mDot's press count can't detect a rescue.** `presses` resets as soon as
+  the Pi has power, so the node always reads 0 at boot. Probation uses the
+  off-time instead (9.2).
+- **Checked on the test unit:** Witty Pi firmware revision 0x07 (register 12;
+  0x26 in register 0 is the board ID), zone America/New_York, and its
+  `runScript.sh` logs "Schedule next startup at:" with two spaces.
 - **`DOWNLINK_CODE_LENGTHS` has only fixed widths.** `1D 9D` is the first
   length-prefixed code; the new parser needs one special case (5.6).
