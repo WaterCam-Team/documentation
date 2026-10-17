@@ -306,6 +306,35 @@ A schedule the node didn't install itself (copied by hand) is identified by the
 CRC-32 of the file's bytes, reported with source "manual" (9.3), so the two can't
 be confused.
 
+### 4.6 Time zones, daylight saving and local daylight
+
+Decided 2026-10-17:
+
+- **Units keep a local system zone.** Units in US Eastern stay on
+  `America/New_York`, so file names, capture folders and logs stay in local time
+  (easier during development). Units deployed in another zone get that zone set
+  at installation (setup mode). The Witty Pi RTC keeps local time, so the
+  DST-hour error of 4.3 stays: one wake per change lands an hour off until
+  `syncTime.sh` corrects the RTC. Running nodes in UTC (which would remove it
+  without touching the Witty Pi scripts) is not adopted for now.
+- **Neighbourhoods get a time zone** (an IANA name, e.g. `America/New_York`) in
+  the API. The dashboard shows schedules, wakes and the DST shift in it, and
+  warns when a unit's reported offset (`tzo`, 9.3) doesn't match its
+  neighbourhood's offset for that date.
+- **Local daylight is matched by the schedule editor (18.5)**, not by the
+  node. The wire format stays UTC. A fixed schedule slides against daylight
+  through the year (at mid-northern latitudes about 3 h at each end of the day
+  between winter and summer), so the dashboard warns when a unit's schedule
+  misses more than about 1 h of daylight at either end or wakes in darkness,
+  and the operator applies an updated schedule a few times a year.
+- **The built-in presets (4.4) are US Eastern schedules.** The dashboard
+  offers them only for neighbourhoods whose zone they suit, or shows what they
+  mean in local time and daylight before they are applied elsewhere.
+- **Later:** a sunrise/sunset schedule type computed on the node (NOAA sunrise
+  formula, the window rewritten once a day through the normal install, the
+  neighbourhood's reference position in the command so every unit computes the
+  same times). Only if seasonal re-applying becomes a chore.
+
 ## 5. Wire format
 
 ### 5.1 Code and shape
@@ -1368,6 +1397,37 @@ red-level and neighbourhood sends need typing the neighbourhood name. Controls
 follow the existing WCAG 2.2 AA work: labelled inputs, status in text not only
 colour, the preview strip with a text equivalent.
 
+### 18.5 Schedule editor and saved schedules
+
+A dashboard editor to define a schedule and apply it to selected units or
+neighbourhoods, so an operator can match local daylight hours (4.6).
+
+- **Editing in local time.** The operator enters the window in the
+  neighbourhood's time zone; the API converts it to the UTC custom spec (4.2).
+  A schedule applied across zones shows its times in each zone, with a warning.
+- **Daylight shown while editing.** A 24 h bar per neighbourhood with the
+  site's sunrise and sunset (from the devices' stored positions) for today, the
+  next solstice and the next DST change, the wakes marked on it. Wakes in
+  darkness and uncovered daylight are visible at once.
+- **Live checks.** The node's validation rules (6), the energy guard (15) and
+  the preview warnings (17.4) run in the editor; a schedule the node would
+  reject can't be saved.
+- **Saved schedules are a library on the server**, named and versioned. They
+  are custom specs, so a new one needs no node release (unlike a preset) and
+  goes out as the 13 B custom op. A saved version is never edited in place:
+  editing creates a new version, and units move to it only when the operator
+  applies it as a batch.
+- **Applying:** to a neighbourhood, or to any selection of units, through the
+  batch path of 13 (canary for permanent schedules, pacing, offset spread,
+  per-unit progress, rollback). The device panel shows the saved schedule's
+  name when the unit's reported hash matches it (offset aside).
+- **Drift warning** (4.6) on units whose schedule no longer fits the season.
+- **Limit:** one daily window per schedule, as in the spec. Two windows a day
+  would need a spec extension (later).
+- API: a `saved_schedules` table (id, name, version, spec without offset,
+  created_by, created_at, archived) and `neighborhoods.timezone`, in the
+  migration of 17.1. Permission `manage_schedules` (Q15) covers both.
+
 ## 19. Deploy order and compatibility
 
 | Combination | Behaviour |
@@ -1517,6 +1577,15 @@ confirmed; a batch of 20 simulated units with pacing; API restart mid-batch.
 16. **Probation:** 3 scheduled wakes; rollback triggered by the off-time at
     boot (9.2), not the mDot's press count; plus a server alert on a missed first
     wake.
+
+Added 2026-10-17:
+
+17. **Time zones:** units keep a local system zone (US Eastern units stay on
+    `America/New_York`, local file and folder names); neighbourhoods get a time
+    zone in the API (4.6).
+18. **Schedule editor:** saved, versioned schedules defined in local time with
+    daylight shown, applied to units or neighbourhoods as batches (18.5). A
+    node-side sunrise/sunset type is later, if needed.
 
 ## 23. Where the code differs from what the plan assumed
 
