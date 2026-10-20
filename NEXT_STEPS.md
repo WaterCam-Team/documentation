@@ -1,7 +1,27 @@
 # WaterCam next steps
 
-**Updated:** 2026-10-11. In rough priority order. Each item names the repo and
+**Updated:** 2026-10-19. In rough priority order. Each item names the repo and
 PR or doc to start from.
+
+## Now: get the units deployable
+**Repos:** SU-WaterCam, mDot-AT-firmware, pcb-designs
+
+Found on 2026-10-19: unit power cuts logged by the Witty Pi as "power supply is
+newly connected" have two hardware causes, and neither shows a voltage sag first.
+- **The Witty Pi's USB-C socket.** On 006, pushing or wiggling the plug cut power
+  with two different adapters and cables, and tilting the box did the same. The
+  fix is to feed 5 V through the Witty Pi's P2 header instead
+  (SU-WaterCam `docs/WITTYPI_P2_POWER_HARNESS.md`).
+- **The mDot's jumper wiring.** The mDot runs from the Witty Pi's own 3.3 V rail,
+  so disturbing its wires reset the whole unit (005). A lifted mDot ground also
+  left the mDot hung until it was power-cycled.
+
+- [ ] 006: fit the P2 harness, secure the mDot wiring, then wiggle- and tilt-test with the lid closed.
+- [ ] 006: gyro calibration stage, deployment config (ticktalk, schedule, next wake), then magnetometer, mount angle and a LoRa check at the site.
+- [ ] Release v2026.10.4: calibration-tool fixes (SU-WaterCam #201, #212), runnable tools (#202), the LoRa daemon keep-alive (#211), the P2 harness doc (#210).
+- [ ] Every other unit: the same USB-C push/wiggle test (ideally the P2 feed), secure mDot wiring with PA_6 connected, IMU calibration, update by tag.
+- [ ] mDot firmware `4.1.5-wc2610-sw2` (mDot-AT-firmware #12, #14): restarts the mDot if its firmware stops, or if the Pi is on and no AT input arrives for 30 minutes. Units need v2026.10.4's keep-alive **before** this firmware. Tested on 005 on 2026-10-19 (flash, join, remote wake, an hour idle without a restart).
+- [ ] Decide whether a small cap on the Witty Pi's 3.3 V rail helps: one unit ran 100 µF across P3 3V3/GND overnight on 2026-10-19; compare with a night without it.
 
 ## 1. Flash and test the emergency-packet firmware fix
 **Repo:** mDot-AT-firmware, PR #2 (open)
@@ -9,8 +29,8 @@ PR or doc to start from.
 The mDot firmware currently treats **any** one-byte downlink as the emergency
 message `!` and powers the Pi on. PR #2 accepts only `!` (0x21).
 
-- [ ] Build in Mbed Studio and flash one mDot (unit 005).
-- [ ] With the Pi off, send `21` on f_port 10: PB_1 should pulse and the Pi should boot.
+- [x] Build and flash one mDot (unit 005): builds on the command line now; flashed over serial (mDot-AT-firmware `docs/BUILD_AND_FLASH.md`).
+- [x] With the Pi off, send `21` on f_port 10: PB_1 should pulse and the Pi should boot. Remote wake works on 005 (2026-10-10, and twice on 2026-10-19).
 - [ ] Send another single byte, e.g. `22`: it should be forwarded, with no power-on.
 - [ ] Send `5001`: the debug-status reply should still arrive.
 - [ ] Merge, then flash the rest of the fleet.
@@ -41,6 +61,8 @@ meaningful yet.
 ## 4. Update the field units (007–011)
 **Doc:** SU-WaterCam `docs/FIELD_DEPLOYMENT_GUIDE.md`
 
+008–011 were prepared and tested on 2026-10-15 and run release v2026.10.2. Update units by release tag rather than `main` (SU-WaterCam `docs/RELEASES.md`); the list below is what a unit needs, for checking one.
+
 Use WiFi on the bench where possible, to save cellular data. For each unit:
 - [ ] Pull SU-WaterCam `main`.
 - [ ] Install and enable `lora_daemon`, `segformer_daemon`, `wittypi-recovery`, `wittypi-boot-mark` and `wittypi-next-wake` (SU-WaterCam #156: re-arms the next schedule slot at every shutdown, so a boot between slots can't skip one).
@@ -60,7 +82,7 @@ Use WiFi on the bench where possible, to save cellular data. For each unit:
 
 After co-registration, the node compares the IMU pose with the one stored with the cached transform. It sends `registration_status` on `01 08` (0 ok, 1 shifted, 2 adopted, 3 no cache, 4 no IMU), and the dashboard shows "Check alignment" while it is 1. It flags only; the transform is never re-solved automatically. Tested on 005 (LoRa) and 006 (IP) on 2026-10-11: adopted, then ok, and both reached the server.
 
-- [ ] Do IMU stage-1 calibration (`bno055_calibration.json`) on 005, 006 and the field units. Until then heading isn't trusted and only tilt counts.
+- [ ] Do IMU stage-1 calibration (`bno055_calibration.json`) on 005, 006 and the field units. Until then heading isn't trusted and only tilt counts. Use `--mode calibrate --stages gyro,accel` at the lab and `--stages mag` at the site; on these units accel usually reaches 1/3 or 2/3 (the antennas block the side positions). 006 has accel saved (1/3).
 - [ ] Look at the "Check alignment" pill in a browser; it has only been syntax-checked.
 - [ ] When a unit flags, check its alignment by eye, then re-seed or run `python -m tools.registration_orientation --reset`.
 
@@ -83,7 +105,7 @@ the node maps `14 94` to `photo_interval`, in seconds, minimum 30. The node
 rejects those values, so neither setting can currently be changed from the
 dashboard.
 
-- [ ] Decide what `14 94` means, give the other setting its own code, and make the API encoder and the node's LoRa and IP parsers agree.
+- [x] Decide what `14 94` means, give the other setting its own code, and make the API encoder and the node's LoRa and IP parsers agree. Done in SU-WaterCam #134/#136: `14 94` is the flood-code frequency everywhere (index into 10–60 min). `photo_interval` has no remote command; add one only if it's needed.
 
 ## 8. Measure power properly
 **Doc:** SU-WaterCam `docs/POWER_ANALYSIS.md`
@@ -121,6 +143,7 @@ Units have no state-of-charge sensor, and since SU-WaterCam #122 they send no ba
 - [ ] Fix the `MDOT:MTDOT` footprint: it has a duplicate pad 24 and no pad 28.
 - [ ] Settle the open assembly choices (BNO055 JP2, R6/R7, R3's footprint, HAT EEPROM), build the fab package, and order samples from OSHPark.
 - [ ] Add a connector for the pack's charge signal (SBU on the V75) to mDot `PB_0` (section 10). The mDot symbol's pin numbers don't match MultiTech's guide (PB0/PB1 and PA0/PA7 are swapped), so lay out by pin name.
+- [ ] Add design change 19 (a polymer bulk cap at the Witty Pi's 5 V input) and 20 (the mDot on its own 3.3 V regulator, and NRESET on a Pi GPIO through a MOSFET) from `WaterCam_PCB_Design_Changes_Required.md` to the schematic. Both follow the 2026-10-19 power-cut findings.
 
 ## 12. Later
 - [ ] Cap how long emergency mode can run (e.g. 6–8 h), then fall back to frequent scheduled wakes. Emergency mode keeps a unit on continuously, about 70–110 Wh/day.
