@@ -105,7 +105,7 @@ the node maps `14 94` to `photo_interval`, in seconds, minimum 30. The node
 rejects those values, so neither setting can currently be changed from the
 dashboard.
 
-- [ ] Decide what `14 94` means, give the other setting its own code, and make the API encoder and the node's LoRa and IP parsers agree.
+- [x] Decide what `14 94` means, give the other setting its own code, and make the API encoder and the node's LoRa and IP parsers agree. Done in SU-WaterCam #134/#136: `14 94` is the flood-code frequency everywhere (index into 10–60 min). `photo_interval` has no remote command; add one only if it's needed.
 
 ## 8. Measure power properly
 **Doc:** SU-WaterCam `docs/POWER_ANALYSIS.md`
