@@ -47,6 +47,19 @@ this is the time to have one copy.
   CI test fails if the vendored copy differs from the tag it names.
 - **Georeferencing tools:** import the package directly.
 
+**Caller check (2026-10-21):** no other repo imports or runs Georeferencing
+scripts by path, so moving files there breaks nothing elsewhere. The coupling
+is all copies: SU-WaterCam `tools/camera_geometry.py` and `tools/geo_core.py`,
+plus a `tools/camera_calibration.py` that has diverged (51-line diff), and the
+API's ports in `app/georef_math.py` and `app/dem_math.py`. The one direct file
+dependency is API `scripts/seed_ufo006_georef.py`, which reads
+`calibration.json` and `unit_config_UFO006.json` from the Georeferencing root;
+keep both there (or update that script) when restructuring. Georeferencing's
+`LLM_CONTEXT.md` module map now marks each file library / core / helper /
+experimental / archived: the *library* rows are what moves into `ufonet_geo`
+in step 2. Do any reorganisation of the Georeferencing repo layout as part of
+step 5, not as a separate reshuffle first.
+
 ## Steps (each a PR)
 
 1. **Golden tests first.** Before moving anything, record outputs of the current
