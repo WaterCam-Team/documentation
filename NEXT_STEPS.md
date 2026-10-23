@@ -160,6 +160,7 @@ Units have no state-of-charge sensor, and since SU-WaterCam #122 they send no ba
 ## 12. Later
 - [x] Cap how long emergency mode can run: `emergency_max_hours` (default 24) with a hardware backstop. Sleeping between captures (SU-WaterCam #243) cuts its cost about fourfold.
 - [ ] Emergency mode's low-battery guard (longer interval at low charge), once the charge signal (section 10) is readable.
+- [ ] Lower the mDot's always-on draw, the largest item in a unit's daily energy. Measure it first; options that keep Class C, and a Class B or Class A + heartbeat variant for deployments that can accept a slower remote wake, are in `LORAWAN_CLASS_B_OPTION.md` (not planned).
 - [ ] Investigate updating the segmentation model over the air, within the cellular data limits.
 - [ ] Test ONNX export and inference for the recent SegFormer 3-band model.
 - [ ] Watch a real command arrive over cellular. Since SU-WaterCam #144 the node polls for IP commands after every delivered uplink, so a cellular-only unit gets them after the capture. Tested on 006 with an empty queue only.
