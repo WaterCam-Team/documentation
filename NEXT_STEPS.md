@@ -1,10 +1,21 @@
 # WaterCam next steps
 
-**Updated:** 2026-10-19. In rough priority order. Each item names the repo and
+**Updated:** 2026-10-22. In rough priority order. Each item names the repo and
 PR or doc to start from.
 
 ## Now: get the units deployable
 **Repos:** SU-WaterCam, mDot-AT-firmware, pcb-designs
+
+**State on 2026-10-22.** Node release v2026.10.7 (SU-WaterCam, signed; needs the API at `3138fda` or later, which production runs). 005 and 006 are on v2026.10.6 and v2026.10.7; 008–011 are still on v2026.10.2 and switched off.
+
+- [ ] **006: 24 h run on v2026.10.7** with the dashboard's sun-following schedule (sunrise+30 to sunset−15, hourly, 10 min), delivered and acked over IP on 2026-10-22. Check the wakes, uploads, USB-off and the daily GPS window from its logs.
+- [ ] **mDot firmware: the reset loop when it can't join** (mDot-AT-firmware #22, draft). With an unreachable sub-band, sw6 and sw7 both restart every 20 s without reaching the join, so the self watchdog isn't being kicked; the likely cause is a crash early in the join path, whose report goes to the unwired debug port. A diagnostic build with crash capture is ready for 005, which first needs a power cycle (its bootloader hung during a flash). Then the fix, then flash 006 once, before it deploys.
+- [ ] mDot flash tool: `flash --reset-loop` for an mDot that keeps restarting (mDot-AT-firmware #24).
+- [ ] mDot firmware, after the fix: report the reset reason and any crash address on the AT port at start-up, so a field unit can say why its mDot restarted.
+- [ ] Emergency mode sleeps between captures (SU-WaterCam #243): about 15–22 Wh/day at 10 minutes instead of 70–110. Bench test on a unit before release.
+- [ ] Measure the mDot's receive current with the Pi off (SU-WaterCam #244): the datasheet's 43 mA would add about 3 Wh/day to every schedule.
+- [ ] Tilt test of the pose levels on 005 (by hand: about 2°, 7° and 25°).
+- [ ] 008–011: power on over WiFi and update to the current release, with v2026.10.6's install steps.
 
 Found on 2026-10-19: unit power cuts logged by the Witty Pi as "power supply is
 newly connected" have two hardware causes, and neither shows a voltage sag first.
@@ -18,7 +29,7 @@ newly connected" have two hardware causes, and neither shows a voltage sag first
 
 - [ ] 006: fit the P2 harness, secure the mDot wiring, then wiggle- and tilt-test with the lid closed.
 - [ ] 006: gyro calibration stage, deployment config (ticktalk, schedule, next wake), then magnetometer, mount angle and a LoRa check at the site.
-- [ ] Release v2026.10.4: calibration-tool fixes (SU-WaterCam #201, #212), runnable tools (#202), the LoRa daemon keep-alive (#211), the P2 harness doc (#210).
+- [x] Release v2026.10.4 (and since then v2026.10.5–v2026.10.7).
 - [ ] Every other unit: the same USB-C push/wiggle test (ideally the P2 feed), secure mDot wiring with PA_6 connected, IMU calibration, update by tag.
 - [ ] mDot firmware `4.1.5-wc2610-sw2` (mDot-AT-firmware #12, #14): restarts the mDot if its firmware stops, or if the Pi is on and no AT input arrives for 30 minutes. Units need v2026.10.4's keep-alive **before** this firmware. Tested on 005 on 2026-10-19 (flash, join, remote wake, an hour idle without a restart).
 - [ ] Decide whether a small cap on the Witty Pi's 3.3 V rail helps: one unit ran 100 µF across P3 3V3/GND overnight on 2026-10-19; compare with a night without it.
@@ -61,7 +72,7 @@ meaningful yet.
 ## 4. Update the field units (007–011)
 **Doc:** SU-WaterCam `docs/FIELD_DEPLOYMENT_GUIDE.md`
 
-008–011 were prepared and tested on 2026-10-15 and run release v2026.10.2. Update units by release tag rather than `main` (SU-WaterCam `docs/RELEASES.md`); the list below is what a unit needs, for checking one.
+008–011 were prepared and tested on 2026-10-15 and run release v2026.10.2; the current release is v2026.10.7. Update units by release tag rather than `main` (SU-WaterCam `docs/RELEASES.md`); the list below is what a unit needs, for checking one.
 
 Use WiFi on the bench where possible, to save cellular data. For each unit:
 - [ ] Pull SU-WaterCam `main`.
@@ -110,8 +121,8 @@ dashboard.
 ## 8. Measure power properly
 **Doc:** SU-WaterCam `docs/POWER_ANALYSIS.md`
 
-- [ ] Measure the off-state draw: the Witty Pi plus the mDot listening in Class C, with the Pi off. It may be as large as all the wakes combined.
-- [ ] Measure the energy per wake with a logger sampling at least once a second. The two captures were measured at 5 Hz on 2026-10-06 (75–87 mWh); boot and shutdown still weren't.
+- [ ] Measure the off-state draw: the Witty Pi plus the mDot listening in Class C, with the Pi off. It may be as large as all the wakes combined. USB meters read nothing below 10–20 mA, so use a multimeter in series with the mDot's VDD (SU-WaterCam #244).
+- [x] Measure the energy per wake with a logger sampling at least once a second. The two captures were measured at 5 Hz on 2026-10-06 (75–87 mWh); boot (25–35 mWh) and shutdown (10–15 mWh) on 005 on 2026-10-22.
 - [ ] Update `POWER_ANALYSIS.md` with both.
 
 ## 9. Open field-power tests
@@ -143,10 +154,12 @@ Units have no state-of-charge sensor, and since SU-WaterCam #122 they send no ba
 - [ ] Fix the `MDOT:MTDOT` footprint: it has a duplicate pad 24 and no pad 28.
 - [ ] Settle the open assembly choices (BNO055 JP2, R6/R7, R3's footprint, HAT EEPROM), build the fab package, and order samples from OSHPark.
 - [ ] Add a connector for the pack's charge signal (SBU on the V75) to mDot `PB_0` (section 10). The mDot symbol's pin numbers don't match MultiTech's guide (PB0/PB1 and PA0/PA7 are swapped), so lay out by pin name.
-- [ ] Add design change 19 (a polymer bulk cap at the Witty Pi's 5 V input) and 20 (the mDot on its own 3.3 V regulator, and NRESET on a Pi GPIO through a MOSFET) from `WaterCam_PCB_Design_Changes_Required.md` to the schematic. Both follow the 2026-10-19 power-cut findings.
+- [ ] Add design change 19 (a polymer bulk cap at the Witty Pi's 5 V input) and 20 (a separate mDot supply, and NRESET on GPIO25 through a MOSFET) from `WaterCam_PCB_Design_Changes_Required.md` to the schematic. Both follow the 2026-10-19 power-cut findings. `Schematic_Remaining_Work.md` #18–#20 (pcb-designs #4, #5) refine 20: feed the mDot the 5 V directly through a Schottky rather than a 3.3 V LDO, which would leave it at MultiTech's 3.3 V minimum. Update change 20 on the v6 branch to match.
+- [ ] A debug UART header for the mDot (PA_9/PA_10/GND) and a series resistor on its AT TX (`Schematic_Remaining_Work.md` #19). The units are hand-wired, and these aren't practical to add by hand.
 
 ## 12. Later
-- [ ] Cap how long emergency mode can run (e.g. 6–8 h), then fall back to frequent scheduled wakes. Emergency mode keeps a unit on continuously, about 70–110 Wh/day.
+- [x] Cap how long emergency mode can run: `emergency_max_hours` (default 24) with a hardware backstop. Sleeping between captures (SU-WaterCam #243) cuts its cost about fourfold.
+- [ ] Emergency mode's low-battery guard (longer interval at low charge), once the charge signal (section 10) is readable.
 - [ ] Investigate updating the segmentation model over the air, within the cellular data limits.
 - [ ] Test ONNX export and inference for the recent SegFormer 3-band model.
 - [ ] Watch a real command arrive over cellular. Since SU-WaterCam #144 the node polls for IP commands after every delivered uplink, so a cellular-only unit gets them after the capture. Tested on 006 with an empty queue only.
